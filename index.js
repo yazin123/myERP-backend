@@ -36,7 +36,7 @@ app.use(helmet({
 }));
 
 app.use(cors({
-    origin: ['http://localhost:3000', 'https://my-erp-frontend-admin.vercel.app'],
+    origin: ['http://localhost:3000', 'https://my-erp-frontend.vercel.app/'],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
     credentials: true,
     exposedHeaders: ['Content-Length', 'Authorization']
