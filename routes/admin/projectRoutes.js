@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const path = require('path');
-const { loginAuth, checkAccessProject, apiLimiter } = require('../../middleware/auth');
+const { loginAuth, checkAccessProject, apiLimiter, authenticate, authorize } = require('../../middleware/auth');
 const projectController = require('../../controllers/admin/projectController');
 const fs = require('fs');
 
@@ -84,5 +84,62 @@ router.put('/update',
 );
 
 router.delete('/:id', loginAuth, checkAccessProject, projectController.deleteProject);
+
+// Base route: /api/admin/projects
+
+// Create project - Only admin, teamlead, and project manager can create projects
+router.post(
+    '/',
+    authenticate,
+    authorize(['admin', 'teamlead', 'projectmanager']),
+    projectController.createProject
+);
+
+// Get all projects with filters
+router.get(
+    '/',
+    authenticate,
+    authorize(['admin', 'teamlead', 'projectmanager', 'hr']),
+    projectController.getProjects
+);
+
+// Get single project
+router.get(
+    '/:id',
+    authenticate,
+    projectController.getProject
+);
+
+// Update project - Only project head or admin can update
+router.put(
+    '/:id',
+    authenticate,
+    authorize(['admin', 'teamlead', 'projectmanager']),
+    projectController.updateProject
+);
+
+// Update project pipeline
+router.patch(
+    '/:id/pipeline',
+    authenticate,
+    authorize(['admin', 'teamlead', 'projectmanager']),
+    projectController.updateProjectPipeline
+);
+
+// Get team members by tech stack
+router.get(
+    '/team-members/tech-stack',
+    authenticate,
+    authorize(['admin', 'teamlead', 'projectmanager']),
+    projectController.getTeamMembersByTechStack
+);
+
+// Delete project - Only admin can delete
+router.delete(
+    '/:id',
+    authenticate,
+    authorize(['admin']),
+    projectController.deleteProject
+);
 
 module.exports = router;

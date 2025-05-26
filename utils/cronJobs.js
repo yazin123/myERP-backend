@@ -5,6 +5,8 @@ const Performance = require('../models/Performance');
 const Lead = require('../models/Lead');
 const User = require('../models/User');
 const moment = require('moment');
+const Project = require('../models/Project');
+const { createNotification } = require('./notification');
 
 // Notification Service
 const notificationService = {
@@ -47,7 +49,7 @@ const setupCronJobs = () => {
             console.log("CRON updated :- Checked Pending tasks and created performance");
 
         } catch (error) {
-            console.error('Cron job error:', error);
+            console.log('Cron job error:', error);
         }
     });
 
@@ -71,7 +73,7 @@ const setupCronJobs = () => {
             }
             console.log("CRON updated :- Checked Pending Approval and created performance");
         } catch (error) {
-            console.error('Approval check cron job error:', error);
+            console.log('Approval check cron job error:', error);
         }
     });
 
@@ -108,7 +110,7 @@ const setupCronJobs = () => {
             }
 
         } catch (error) {
-            console.error('Follow-up notification cron job error:', error);
+            console.log('Follow-up notification cron job error:', error);
         }
     });
 
@@ -136,8 +138,20 @@ const setupCronJobs = () => {
 
             console.log("CRON updated: Checked missed followups and updated performance");
         } catch (error) {
-            console.error('Missed follow-up check cron job error:', error);
+            console.log('Missed follow-up check cron job error:', error);
         }
+    });
+
+    // Function to send project date reminders
+    cron.schedule('0 9 * * *', sendProjectDateReminders);
+
+    // Update project progress every hour
+    cron.schedule('0 * * * *', updateProjectProgress);
+
+    // Clear old notifications every day at midnight
+    cron.schedule('0 0 * * *', () => {
+        const { clearOldNotifications } = require('./notification');
+        clearOldNotifications();
     });
 };
 
@@ -171,7 +185,7 @@ const processTaskPerformance = async (task) => {
 
         await new Performance(performanceData).save();
     } catch (error) {
-        console.error('Error processing task performance:', error);
+        console.log('Error processing task performance:', error);
     }
 };
 
@@ -195,7 +209,7 @@ const processPendingApproval = async (task) => {
             }).save();
         }
     } catch (error) {
-        console.error('Error processing pending approval:', error);
+        console.log('Error processing pending approval:', error);
     }
 };
 
@@ -243,7 +257,156 @@ const processFollowupPerformance = async (followup) => {
         );
 
     } catch (error) {
-        console.error('Error processing follow-up performance:', error);
+        console.log('Error processing follow-up performance:', error);
+    }
+};
+
+// Function to send project date reminders
+const sendProjectDateReminders = async () => {
+    try {
+        const today = new Date();
+        const oneWeekFromNow = new Date(today);
+        oneWeekFromNow.setDate(today.getDate() + 7);
+        
+        const threeDaysFromNow = new Date(today);
+        threeDaysFromNow.setDate(today.getDate() + 3);
+        
+        const oneDayFromNow = new Date(today);
+        oneDayFromNow.setDate(today.getDate() + 1);
+
+        // Get all active projects
+        const projects = await Project.find({ 
+            status: { $ne: 'completed' } 
+        }).populate('projectHead members');
+
+        for (const project of projects) {
+            // Check each date in the project
+            for (const dateObj of project.dates) {
+                const date = new Date(dateObj.date);
+                
+                // One week reminder
+                if (date.toDateString() === oneWeekFromNow.toDateString()) {
+                    await sendDateReminder(project, dateObj, '1 week');
+                }
+                
+                // Three days reminder
+                if (date.toDateString() === threeDaysFromNow.toDateString()) {
+                    await sendDateReminder(project, dateObj, '3 days');
+                }
+                
+                // One day reminder
+                if (date.toDateString() === oneDayFromNow.toDateString()) {
+                    await sendDateReminder(project, dateObj, '1 day');
+                }
+            }
+
+            // Check pipeline dates
+            await checkPipelineDates(project);
+        }
+    } catch (error) {
+        console.log('Error in sendProjectDateReminders:', error);
+    }
+};
+
+// Helper function to send date reminders
+const sendDateReminder = async (project, dateObj, timeframe) => {
+    const message = `Reminder: ${dateObj.name} for project "${project.name}" is coming up in ${timeframe}`;
+    
+    // Notify project head
+    await createNotification({
+        userId: project.projectHead._id,
+        type: 'deadline_reminder',
+        message,
+        reference: {
+            type: 'project',
+            id: project._id
+        }
+    });
+
+    // Notify team members
+    for (const member of project.members) {
+        await createNotification({
+            userId: member._id,
+            type: 'deadline_reminder',
+            message,
+            reference: {
+                type: 'project',
+                id: project._id
+            }
+        });
+    }
+};
+
+// Helper function to check pipeline dates
+const checkPipelineDates = async (project) => {
+    const today = new Date();
+    const phases = [
+        'requirementGathering',
+        'architectCreation',
+        'architectSubmission',
+        ...project.pipeline.developmentPhases
+    ];
+
+    for (const phase of phases) {
+        if (typeof phase === 'string') {
+            const phaseData = project.pipeline[phase];
+            if (phaseData && phaseData.endDate) {
+                const endDate = new Date(phaseData.endDate);
+                if (endDate < today && phaseData.status !== 'completed') {
+                    await createNotification({
+                        userId: project.projectHead._id,
+                        type: 'deadline_reminder',
+                        message: `Phase "${phase}" in project "${project.name}" has passed its deadline`,
+                        reference: {
+                            type: 'project',
+                            id: project._id
+                        }
+                    });
+                }
+            }
+        } else {
+            // Development phase
+            const endDate = new Date(phase.endDate);
+            if (endDate < today && phase.status !== 'completed') {
+                await createNotification({
+                    userId: project.projectHead._id,
+                    type: 'deadline_reminder',
+                    message: `Development phase "${phase.phaseName}" in project "${project.name}" has passed its deadline`,
+                    reference: {
+                        type: 'project',
+                        id: project._id
+                    }
+                });
+            }
+        }
+    }
+};
+
+// Function to check and update project progress
+const updateProjectProgress = async () => {
+    try {
+        const projects = await Project.find({ 
+            status: { $ne: 'completed' } 
+        });
+
+        for (const project of projects) {
+            let completedStages = 0;
+            let totalStages = 3; // Fixed stages
+            
+            ['requirementGathering', 'architectCreation', 'architectSubmission'].forEach(stage => {
+                if (project.pipeline[stage].status === 'completed') completedStages++;
+            });
+            
+            totalStages += project.pipeline.developmentPhases.length;
+            completedStages += project.pipeline.developmentPhases.filter(phase => 
+                phase.status === 'completed'
+            ).length;
+
+            project.progress = Math.round((completedStages / totalStages) * 100);
+            await project.save();
+        }
+    } catch (error) {
+        console.log('Error in updateProjectProgress:', error);
     }
 };
 

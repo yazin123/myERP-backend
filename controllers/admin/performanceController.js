@@ -166,7 +166,7 @@ const performanceController = {
       });
 
     } catch (error) {
-      console.error('Error in getAllPerformance:', error);
+      console.log('Error in getAllPerformance:', error);
       res.status(500).json({
         success: false,
         message: 'Failed to fetch performance records',
@@ -210,7 +210,7 @@ const performanceController = {
       });
 
     } catch (error) {
-      console.error('Error in getPerformanceById:', error);
+      console.log('Error in getPerformanceById:', error);
       res.status(500).json({
         success: false,
         message: 'Failed to fetch performance record',
@@ -263,7 +263,7 @@ const performanceController = {
       });
 
     } catch (error) {
-      console.error('Error in createPerformance:', error);
+      console.log('Error in createPerformance:', error);
       res.status(500).json({
         success: false,
         message: 'Failed to create performance record',
@@ -311,7 +311,7 @@ const performanceController = {
       });
 
     } catch (error) {
-      console.error('Error in updatePerformance:', error);
+      console.log('Error in updatePerformance:', error);
       res.status(500).json({
         success: false,
         message: 'Failed to update performance record',
@@ -341,7 +341,7 @@ const performanceController = {
       });
 
     } catch (error) {
-      console.error('Error in deletePerformance:', error);
+      console.log('Error in deletePerformance:', error);
       res.status(500).json({
         success: false,
         message: 'Failed to delete performance record',
@@ -397,7 +397,7 @@ const performanceController = {
       });
 
     } catch (error) {
-      console.error('Error in getUserPerformanceSummary:', error);
+      console.log('Error in getUserPerformanceSummary:', error);
       res.status(500).json({
         success: false,
         message: 'Failed to fetch user performance summary',

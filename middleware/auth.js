@@ -59,18 +59,45 @@ const loginAuth = async (req, res, next) => {
    }
 };
 
-const createRoleAuth = (roles) => (req, res, next) => {
-   if (!roles.includes(req.user.role)) {
-       return res.status(403).json({
-           message: `Access denied. Requires ${roles.join(' or ')} role.`
-       });
-   }
-   next();
+// Role-based authorization middleware
+const authorize = (allowedRoles) => {
+    return (req, res, next) => {
+        try {
+            if (!req.user) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'Authentication required'
+                });
+            }
+
+            // Convert single role to array if needed
+            const roles = Array.isArray(allowedRoles) ? allowedRoles : [allowedRoles];
+
+            // Add admin and superadmin to allowed roles by default
+            const effectiveRoles = [...new Set([...roles, 'admin', 'superadmin'])];
+
+            if (!effectiveRoles.includes(req.user.role)) {
+                return res.status(403).json({
+                    success: false,
+                    message: `Access denied. Required roles: ${roles.join(', ')}`
+                });
+            }
+
+            next();
+        } catch (error) {
+            console.log('Authorization error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Authorization failed'
+            });
+        }
+    };
 };
 
-const adminAuth = createRoleAuth(['admin', 'superadmin']);
-const teamLeadAuth = createRoleAuth(['team lead', 'admin', 'superadmin']);
-const superadminAuth = createRoleAuth(['superadmin']);
+// Predefined role-based middleware
+const adminAuth = authorize(['admin']);
+const teamLeadAuth = authorize(['teamlead']);
+const superadminAuth = authorize(['superadmin']);
 
 const refreshToken = async (req, res) => {
    try {
@@ -109,6 +136,7 @@ const checkAccess = async (req, res, next) => {
        res.status(500).json({ error: error.message });
    }
 };
+
 const checkAccessProject = async (req, res, next) => {
     try {
         // Get project id from body for PUT/POST requests, or params for GET/DELETE
@@ -138,7 +166,7 @@ const checkAccessProject = async (req, res, next) => {
         req.project = project;
         next();
     } catch (error) {
-        console.error('Access check error:', error);
+        console.log('Access check error:', error);
         res.status(500).json({ error: error.message });
     }
 };
@@ -156,6 +184,7 @@ const logout = async (req, res) => {
 module.exports = {
    loginLimiter,
    apiLimiter, 
+   authenticate : loginAuth,
    loginAuth,
    adminAuth,
    teamLeadAuth,
@@ -164,5 +193,6 @@ module.exports = {
    logout,
    generateTokens,
    checkAccess,
-   checkAccessProject
+   checkAccessProject,
+   authorize
 };

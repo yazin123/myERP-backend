@@ -230,7 +230,7 @@ const taskController = {
       });
 
       const totalTasks = tasks.length;
-      const completedTasks = tasks.filter(task =>
+      const completedTasks = tasks?.filter(task =>
         task.status === 'Completed' && task.isCompletedApproved
       ).length;
 
@@ -266,7 +266,7 @@ const taskController = {
       });
 
       const totalTasks = tasks.length;
-      const completedTasks = tasks.filter(task =>
+      const completedTasks = tasks?.filter(task =>
         task.status === 'Completed' && task.isCompletedApproved
       ).length;
 

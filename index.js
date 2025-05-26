@@ -16,7 +16,8 @@ const AdminuserRoutes = require('./routes/admin/userRoutes');
 const AdmintaskRoutes = require('./routes/admin/taskRoutes');
 const AdminperformanceRoutes = require('./routes/admin/performanceRoutes');
 const AdminleadRoutes = require('./routes/admin/leadRoutes');
-const AdminprojectRoutes = require('./routes/admin/projectRoutes')
+const AdminprojectRoutes = require('./routes/admin/projectRoutes');
+const AdmindashboardRoutes = require('./routes/admin/dashboardRoutes');
 
 require('dotenv').config();
 
@@ -79,10 +80,11 @@ setupCronJobs();
 
 // Routes for admin
 app.use('/api/admin/users', AdminuserRoutes);
-app.use ('/api/admin/projects',AdminprojectRoutes);
+app.use('/api/admin/projects', AdminprojectRoutes);
 app.use('/api/admin/tasks', AdmintaskRoutes);
 app.use('/api/admin/performance', AdminperformanceRoutes);
 app.use('/api/admin/leads', AdminleadRoutes);
+app.use('/api/admin/dashboard', AdmindashboardRoutes);
 
 // Health check
 app.get("/health", (req, res) => {

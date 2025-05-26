@@ -1,4 +1,6 @@
 const Project = require('../../models/Project');
+const User = require('../../models/User');
+const { createNotification } = require('../../utils/notification');
 const fs = require('fs');
 const path = require('path');
 
@@ -8,35 +10,97 @@ const projectController = {
         console.log('Request Files:', req.files);
 
         try {
-            // Parse filesMetadata from the request body
-            const filesMetadata = JSON.parse(req.body.filesMetadata || '[]');
+            const {
+                name,
+                pointOfContact,
+                projectHead,
+                members,
+                description,
+                techStack,
+                dates,
+                pipeline
+            } = req.body;
 
-            // Map files to the correct structure
-            const files = req.files ? req.files.map((file, index) => ({
-                name: filesMetadata[index]?.name || file.originalname,
-                filedata: file.path,
-                filetype: filesMetadata[index]?.filetype || file.mimetype,
-            })) : [];
+            // Validate required fields
+            if (!name || !projectHead || !description || !techStack || !dates) {
+                return res.status(400).json({ 
+                    success: false, 
+                    message: 'Missing required fields' 
+                });
+            }
 
-            // Prepare project data
-            const projectData = {
-                ...req.body,
-                projectOwner: req.user.userId,
-                createdBy: req.user.userId,
-                files: files,
-                statusHistory: [{
-                    status: req.body.status,
-                    description: 'Project created',
-                    createdBy: req.user.userId,
-                }],
-            };
+            // Validate dates
+            if (!validateDates(dates)) {
+                return res.status(400).json({ 
+                    success: false, 
+                    message: 'Invalid dates format' 
+                });
+            }
 
-            // Create the project
-            const project = await Project.create(projectData);
-            res.status(201).json(project);
+            // Check if project head exists and has appropriate role
+            const headUser = await User.findById(projectHead);
+            if (!headUser || !['teamlead', 'projectmanager'].includes(headUser.role)) {
+                return res.status(400).json({ 
+                    success: false, 
+                    message: 'Invalid project head' 
+                });
+            }
+
+            // Create project
+            const project = new Project({
+                name,
+                pointOfContact,
+                projectHead,
+                members: members || [],
+                description,
+                techStack,
+                dates,
+                pipeline: {
+                    requirementGathering: { status: 'pending' },
+                    architectCreation: { status: 'pending' },
+                    architectSubmission: { status: 'pending' },
+                    developmentPhases: []
+                },
+                createdBy: req.user._id
+            });
+
+            await project.save();
+
+            // Notify project head and members
+            await createNotification({
+                userId: projectHead,
+                type: 'project_assignment',
+                message: `You have been assigned as project head for ${name}`,
+                reference: {
+                    type: 'project',
+                    id: project._id
+                }
+            });
+
+            if (members && members.length > 0) {
+                await Promise.all(members.map(memberId =>
+                    createNotification({
+                        userId: memberId,
+                        type: 'project_assignment',
+                        message: `You have been assigned to project ${name}`,
+                        reference: {
+                            type: 'project',
+                            id: project._id
+                        }
+                    })
+                ));
+            }
+
+            res.status(201).json({
+                success: true,
+                data: project
+            });
         } catch (error) {
-            console.error('Error creating project:', error);
-            res.status(400).json({ error: error.message });
+            console.log('Error in createProject:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Internal server error'
+            });
         }
     },
     async updateProject(req, res) {
@@ -142,7 +206,7 @@ const projectController = {
                     if (file.filedata) {
                         const filePath = path.join(__dirname, '../../', file.filedata);
                         fs.unlink(filePath, err => {
-                            if (err) console.error('Error deleting file:', err);
+                            if (err) console.log('Error deleting file:', err);
                         });
                     }
                 });
@@ -150,7 +214,7 @@ const projectController = {
     
             res.json(updatedProject);
         } catch (error) {
-            console.error('Error updating project:', error);
+            console.log('Error updating project:', error);
             res.status(400).json({ error: error.message });
         }
     },
@@ -231,7 +295,177 @@ const projectController = {
         } catch (error) {
             res.status(500).json({ error: error.message });
         }
+    },
+
+    async getProjects(req, res) {
+        try {
+            const {
+                status,
+                techStack,
+                projectHead,
+                startDate,
+                endDate,
+                priority
+            } = req.query;
+
+            const query = {};
+
+            if (status) query.status = status;
+            if (techStack) query.techStack = { $in: techStack.split(',') };
+            if (projectHead) query.projectHead = projectHead;
+            if (priority) query.priority = priority;
+
+            if (startDate || endDate) {
+                query.startDate = {};
+                if (startDate) query.startDate.$gte = new Date(startDate);
+                if (endDate) query.startDate.$lte = new Date(endDate);
+            }
+
+            const projects = await Project.find(query)
+                .populate('projectHead', 'name email')
+                .populate('members', 'name email')
+                .sort({ createdAt: -1 });
+
+            res.status(200).json({
+                success: true,
+                count: projects.length,
+                data: projects
+            });
+        } catch (error) {
+            console.log('Error in getProjects:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Internal server error'
+            });
+        }
+    },
+
+    async getProject(req, res) {
+        try {
+            const project = await Project.findById(req.params.id)
+                .populate('projectHead', 'name email')
+                .populate('members', 'name email')
+                .populate('tasks');
+
+            if (!project) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Project not found'
+                });
+            }
+
+            res.status(200).json({
+                success: true,
+                data: project
+            });
+        } catch (error) {
+            console.log('Error in getProject:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Internal server error'
+            });
+        }
+    },
+
+    async updateProjectPipeline(req, res) {
+        try {
+            const { stage, status, startDate, endDate } = req.body;
+            const project = await Project.findById(req.params.id);
+
+            if (!project) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Project not found'
+                });
+            }
+
+            // Check if user has permission
+            if (!project.isProjectHead(req.user._id) && req.user.role !== 'admin') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Not authorized to update pipeline'
+                });
+            }
+
+            if (['requirementGathering', 'architectCreation', 'architectSubmission'].includes(stage)) {
+                project.pipeline[stage] = {
+                    status,
+                    startDate: startDate || new Date(),
+                    endDate
+                };
+            } else if (stage === 'developmentPhase') {
+                const { phaseName } = req.body;
+                if (!phaseName) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Phase name is required for development phase'
+                    });
+                }
+
+                project.pipeline.developmentPhases.push({
+                    phaseName,
+                    status,
+                    startDate: startDate || new Date(),
+                    endDate
+                });
+            }
+
+            await project.save();
+
+            res.status(200).json({
+                success: true,
+                data: project
+            });
+        } catch (error) {
+            console.log('Error in updateProjectPipeline:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Internal server error'
+            });
+        }
+    },
+
+    async getTeamMembersByTechStack(req, res) {
+        try {
+            const { techStack } = req.query;
+
+            if (!techStack) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Tech stack is required'
+                });
+            }
+
+            const techStackArray = techStack.split(',');
+
+            const users = await User.find({
+                skills: { $in: techStackArray },
+                status: 'active'
+            }).select('name email role skills');
+
+            res.status(200).json({
+                success: true,
+                count: users.length,
+                data: users
+            });
+        } catch (error) {
+            console.log('Error in getTeamMembersByTechStack:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Internal server error'
+            });
+        }
     }
+};
+
+// Helper function to validate dates
+const validateDates = (dates) => {
+    if (!Array.isArray(dates)) return false;
+    return dates.every(date => 
+        date.name && 
+        date.date && 
+        new Date(date.date).toString() !== 'Invalid Date'
+    );
 };
 
 module.exports = projectController;
