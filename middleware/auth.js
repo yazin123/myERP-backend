@@ -60,8 +60,8 @@ const loginAuth = async (req, res, next) => {
 };
 
 // Role-based authorization middleware
-const authorize = (allowedRoles) => {
-    return (req, res, next) => {
+const authorize = (allowedRoles, options = {}) => {
+    return async (req, res, next) => {
         try {
             if (!req.user) {
                 return res.status(401).json({
@@ -73,10 +73,45 @@ const authorize = (allowedRoles) => {
             // Convert single role to array if needed
             const roles = Array.isArray(allowedRoles) ? allowedRoles : [allowedRoles];
 
-            // Add admin and superadmin to allowed roles by default
-            const effectiveRoles = [...new Set([...roles, 'admin', 'superadmin'])];
+            // Check if user has one of the allowed roles
+            const hasAllowedRole = roles.includes(req.user.role);
+            
+            // Superadmin can do everything
+            if (req.user.role === 'superadmin') {
+                return next();
+            }
 
-            if (!effectiveRoles.includes(req.user.role)) {
+            // For user management operations
+            if (options.checkUserManagement) {
+                const targetUser = await User.findById(req.params.id);
+                
+                if (!targetUser) {
+                    return res.status(404).json({
+                        success: false,
+                        message: 'Target user not found'
+                    });
+                }
+
+                // Admin can't modify other admins or superadmins
+                if (req.user.role === 'admin' && 
+                    (targetUser.role === 'admin' || targetUser.role === 'superadmin')) {
+                    return res.status(403).json({
+                        success: false,
+                        message: 'Admins cannot modify other admins or superadmins'
+                    });
+                }
+
+                // Manager can't create/modify users
+                if (req.user.role === 'manager') {
+                    return res.status(403).json({
+                        success: false,
+                        message: 'Managers cannot modify user accounts'
+                    });
+                }
+            }
+
+            // If none of the above conditions passed and user doesn't have an allowed role
+            if (!hasAllowedRole) {
                 return res.status(403).json({
                     success: false,
                     message: `Access denied. Required roles: ${roles.join(', ')}`

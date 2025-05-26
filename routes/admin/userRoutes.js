@@ -4,7 +4,7 @@ const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { loginAuth, adminAuth, superadminAuth } = require('../../middleware/auth');
+const { authenticate, authorize } = require('../../middleware/auth');
 const userController = require('../../controllers/admin/userController');
 
 // Create uploads directory if it doesn't exist
@@ -14,61 +14,83 @@ const createUploadDir = (dirPath) => {
     }
 };
 
-// Configure multer storage
+// Configure multer for file uploads
 const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        const uploadDir = path.join('uploads', 'users');
-        createUploadDir(uploadDir);
-        cb(null, uploadDir);
+    destination: (req, file, cb) => {
+        let uploadPath = '';
+        if (file.fieldname === 'photo') {
+            uploadPath = path.join(__dirname, '../../uploads/photos');
+        } else if (file.fieldname === 'resume') {
+            uploadPath = path.join(__dirname, '../../uploads/resumes');
+        }
+        createUploadDir(uploadPath);
+        cb(null, uploadPath);
     },
-    filename: function (req, file, cb) {
+    filename: (req, file, cb) => {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
         cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
     }
 });
 
-// File filter
-const fileFilter = (req, file, cb) => {
-    if (file.fieldname === 'photo') {
-        if (!file.originalname.match(/\.(jpg|jpeg|png)$/)) {
-            return cb(new Error('Please upload an image file (jpg, jpeg, png)'), false);
-        }
-    } else if (file.fieldname === 'resume') {
-        if (!file.originalname.match(/\.(pdf|doc|docx)$/)) {
-            return cb(new Error('Please upload a valid document (pdf, doc, docx)'), false);
-        }
-    }
-    cb(null, true);
-};
-
 const upload = multer({
     storage: storage,
-    fileFilter: fileFilter,
     limits: {
         fileSize: 5 * 1024 * 1024 // 5MB limit
+    },
+    fileFilter: (req, file, cb) => {
+        if (file.fieldname === 'photo') {
+            if (!file.originalname.match(/\.(jpg|jpeg|png)$/)) {
+                return cb(new Error('Only image files are allowed!'), false);
+            }
+        } else if (file.fieldname === 'resume') {
+            if (!file.originalname.match(/\.(pdf|doc|docx)$/)) {
+                return cb(new Error('Only PDF and Word documents are allowed!'), false);
+            }
+        }
+        cb(null, true);
     }
 });
 
-
-
-// Configure multiple file uploads
 const uploadFields = upload.fields([
     { name: 'photo', maxCount: 1 },
     { name: 'resume', maxCount: 1 }
 ]);
 
-// Public route
+// Handle multer errors
+const handleMulterError = (err, req, res, next) => {
+    if (err instanceof multer.MulterError) {
+        return res.status(400).json({ message: err.message });
+    } else if (err) {
+        return res.status(400).json({ message: err.message });
+    }
+    next();
+};
+
+// Public routes
 router.post('/login', userController.login);
 
 // Protected routes
-router.get('/', loginAuth, userController.getAllUsers);
-router.get('/:id', loginAuth, userController.getUserById);
+router.get('/current', authenticate, userController.getCurrentUser);
+router.get('/', authenticate, userController.getAllUsers);
+router.get('/managers', authenticate, userController.getManagers);
+router.get('/:id', authenticate, userController.getUserById);
 
-// Admin only routes with file upload
-router.post('/', loginAuth, adminAuth, uploadFields, userController.addUser);
-router.put('/:id', loginAuth, adminAuth, uploadFields, userController.updateUserById);
-router.delete('/:id', loginAuth, superadminAuth, userController.deleteUserById);
-router.put('/:id/status', loginAuth, adminAuth, userController.updateStatusUserById);
+// Admin and Superadmin routes with file upload
+router.post('/', authenticate, authorize(['admin', 'superadmin']), uploadFields, handleMulterError, userController.addUser);
+router.put('/:id', authenticate, authorize(['admin', 'superadmin'], { checkUserManagement: true }), uploadFields, handleMulterError, userController.updateUser);
+
+// Superadmin only routes
+router.delete('/:id', authenticate, authorize(['superadmin'], { checkUserManagement: true }), userController.deleteUser);
+
+// User's own password change
+router.put('/:id/change-password', authenticate, async (req, res, next) => {
+    // Allow users to change their own password, or admins/superadmins to change others
+    if (req.user._id === req.params.id || ['admin', 'superadmin'].includes(req.user.role)) {
+        next();
+    } else {
+        res.status(403).json({ message: 'Not authorized to change this user\'s password' });
+    }
+}, userController.changePassword);
 
 module.exports = router;
 

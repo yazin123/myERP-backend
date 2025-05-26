@@ -14,115 +14,105 @@ const storage = multer.diskStorage({
         cb(null, uploadPath);
     },
     filename: (req, file, cb) => {
-        // Add timestamp to prevent filename collisions
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
         cb(null, uniqueSuffix + '-' + file.originalname);
-    },
+    }
 });
+
+const fileFilter = (req, file, cb) => {
+    const allowedTypes = [
+        'image/jpeg',
+        'image/png',
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    ];
+
+    if (allowedTypes.includes(file.mimetype)) {
+        cb(null, true);
+    } else {
+        cb(new Error('Invalid file type. Only images, PDFs, and Office documents are allowed.'), false);
+    }
+};
 
 const upload = multer({
     storage,
-    fileFilter: (req, file, cb) => {
-        const allowedTypes = [
-            'image/jpeg', 
-            'image/png', 
-            'application/pdf',
-            'application/msword',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'application/vnd.ms-excel',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        ];
-        
-        if (allowedTypes.includes(file.mimetype)) {
-            cb(null, true);
-        } else {
-            cb(new Error('Invalid file type. Only images, PDFs, and Office documents are allowed.'), false);
-        }
-    },
+    fileFilter,
     limits: {
         fileSize: 10 * 1024 * 1024, // 10MB limit
-        files: 5 // Maximum 5 files per update
-    },
+        files: 5 // Maximum 5 files
+    }
 });
 
 // Error handling middleware for multer
-const handleMulterErrors = (err, req, res, next) => {
+const handleMulterError = (err, req, res, next) => {
     if (err instanceof multer.MulterError) {
         if (err.code === 'LIMIT_FILE_SIZE') {
-            return res.status(400).json({ error: 'File size limit exceeded (10MB max)' });
+            return res.status(400).json({
+                success: false,
+                message: 'File size limit exceeded (10MB max)'
+            });
         }
         if (err.code === 'LIMIT_FILE_COUNT') {
-            return res.status(400).json({ error: 'Too many files (5 max)' });
+            return res.status(400).json({
+                success: false,
+                message: 'Too many files (5 max)'
+            });
         }
-        return res.status(400).json({ error: err.message });
+        return res.status(400).json({
+            success: false,
+            message: err.message
+        });
     }
     if (err) {
-        return res.status(400).json({ error: err.message });
+        return res.status(400).json({
+            success: false,
+            message: err.message
+        });
     }
     next();
 };
 
 // Routes
-router.get('', loginAuth, apiLimiter, projectController.getAllProjects);
-router.get('/:id', loginAuth, projectController.getProjectById);
+router.get('/', authenticate, projectController.getAllProjects);
+router.get('/:id', authenticate, projectController.getProjectById);
 router.get('/assigned', loginAuth, projectController.getAssignedProjects);
 
 // Create and Update routes with file handling
-router.post('', 
-    loginAuth, 
-    upload.array('files', 5), 
-    handleMulterErrors, 
+router.post('/', 
+    authenticate, 
+    authorize(['admin', 'superadmin', 'manager']), 
+    upload.array('files'), 
+    handleMulterError, 
     projectController.createProject
 );
 
-router.put('/update', 
-    loginAuth, 
-    checkAccessProject, 
-    upload.array('files', 5), 
-    handleMulterErrors, 
+router.put('/:id', 
+    authenticate, 
+    upload.array('files'), 
+    handleMulterError, 
     projectController.updateProject
 );
 
-router.delete('/:id', loginAuth, checkAccessProject, projectController.deleteProject);
-
-// Base route: /api/admin/projects
-
-// Create project - Only admin, teamlead, and project manager can create projects
-router.post(
-    '/',
-    authenticate,
-    authorize(['admin', 'teamlead', 'projectmanager']),
-    projectController.createProject
+router.delete('/:id', 
+    authenticate, 
+    authorize(['admin', 'superadmin']), 
+    projectController.deleteProject
 );
 
-// Get all projects with filters
-router.get(
-    '/',
-    authenticate,
-    authorize(['admin', 'teamlead', 'projectmanager', 'hr']),
-    projectController.getProjects
-);
-
-// Get single project
-router.get(
-    '/:id',
-    authenticate,
-    projectController.getProject
-);
-
-// Update project - Only project head or admin can update
-router.put(
-    '/:id',
-    authenticate,
-    authorize(['admin', 'teamlead', 'projectmanager']),
-    projectController.updateProject
+// Update project status
+router.patch('/:id/status', 
+    authenticate, 
+    express.json(),
+    projectController.updateProjectStatus
 );
 
 // Update project pipeline
-router.patch(
-    '/:id/pipeline',
-    authenticate,
-    authorize(['admin', 'teamlead', 'projectmanager']),
+router.patch('/:id/pipeline', 
+    authenticate, 
+    express.json(),
     projectController.updateProjectPipeline
 );
 
@@ -132,14 +122,6 @@ router.get(
     authenticate,
     authorize(['admin', 'teamlead', 'projectmanager']),
     projectController.getTeamMembersByTechStack
-);
-
-// Delete project - Only admin can delete
-router.delete(
-    '/:id',
-    authenticate,
-    authorize(['admin']),
-    projectController.deleteProject
 );
 
 module.exports = router;

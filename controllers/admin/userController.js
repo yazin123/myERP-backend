@@ -1,4 +1,3 @@
-
 // controllers/admin/userController.js
 const User = require('../../models/User');
 const jwt = require('jsonwebtoken');
@@ -29,13 +28,17 @@ const userController = {
             const { userId, password } = req.body;
             const user = await User.findOne({ userId });
     
-            if (!user || !['admin', 'superadmin'].includes(user.role)) {
-                return res.status(401).json({ message: 'Access denied' });
+            if (!user) {
+                return res.status(401).json({ message: 'Invalid credentials' });
             }
     
-            const isMatch = await comparePassword(password, user.password);
+            const isMatch = await user.comparePassword(password);
             if (!isMatch) {
                 return res.status(401).json({ message: 'Invalid credentials' });
+            }
+
+            if (user.status !== 'active') {
+                return res.status(401).json({ message: 'Account is not active' });
             }
     
             user.loginDetails = {
@@ -45,7 +48,11 @@ const userController = {
             await user.save();
     
             const token = jwt.sign(
-                { userId: user._id, role: user.role },
+                { 
+                    userId: user._id, 
+                    role: user.role,
+                    employeeId: user.employeeId 
+                },
                 process.env.JWT_SECRET,
                 { expiresIn: '24h' }
             );
@@ -56,7 +63,10 @@ const userController = {
                     id: user._id,
                     name: user.name,
                     role: user.role,
-                    department: user.department
+                    department: user.department,
+                    employeeId: user.employeeId,
+                    designation: user.designation,
+                    position: user.position
                 }
             });
         } catch (error) {
@@ -72,25 +82,36 @@ const userController = {
                 limit = 10,
                 search,
                 department,
+                designation,
+                role,
                 position,
                 status,
                 sortBy = 'name',
-                order = 'asc'
+                order = 'asc',
+                includeSuperAdmin = false // New parameter to control superadmin visibility
             } = req.query;
 
             const query = {};
+
+            // By default, exclude superadmin from regular listings
+            if (!includeSuperAdmin) {
+                query.role = { $ne: 'superadmin' };
+            }
 
             // Search functionality
             if (search) {
                 query.$or = [
                     { name: { $regex: search, $options: 'i' } },
                     { email: { $regex: search, $options: 'i' } },
-                    { userId: { $regex: search, $options: 'i' } }
+                    { userId: { $regex: search, $options: 'i' } },
+                    { employeeId: { $regex: search, $options: 'i' } }
                 ];
             }
 
             // Filters
             if (department) query.department = department;
+            if (designation) query.designation = designation;
+            if (role && role !== 'all') query.role = role;
             if (position) query.position = position;
             if (status) query.status = status;
 
@@ -102,7 +123,10 @@ const userController = {
                 .sort(sortOption)
                 .limit(limit * 1)
                 .skip((page - 1) * limit)
-                .select('-password');
+                .select('-password')
+                .populate('reportingTo', 'name email employeeId')
+                .populate('projects', 'name status')
+                .populate('tasks', 'title status dueDate');
 
             const total = await User.countDocuments(query);
 
@@ -117,12 +141,60 @@ const userController = {
         }
     },
 
+    // Get available managers
+    getManagers: async (req, res) => {
+        try {
+            const managers = await User.find({
+                $or: [
+                    { role: { $in: ['manager', 'admin', 'superadmin'] } },
+                    { position: 'senior' }
+                ],
+                status: 'active'
+            })
+            .select('_id name email employeeId designation department')
+            .sort('name');
+
+            res.json({
+                success: true,
+                data: managers
+            });
+        } catch (error) {
+            res.status(500).json({ 
+                success: false,
+                message: 'Failed to fetch managers'
+            });
+        }
+    },
+
     // Get user by ID
     getUserById: async (req, res) => {
         try {
+          
             const user = await User.findById(req.params.id)
                 .select('-password')
-                .populate('tasks');
+                .populate('reportingTo', 'name email employeeId')
+                .populate('projects', 'name status')
+                .populate('tasks', 'title status dueDate');
+
+            if (!user) {
+                return res.status(404).json({ message: 'User not found' });
+            }
+           
+            res.json(user);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+    },
+
+    // Add getCurrentUser method
+    getCurrentUser: async (req, res) => {
+        try {
+            const user = await User.findById(req.user._id)
+                .select('-password')
+                .populate('reportingTo', 'name email employeeId')
+                .populate('projects', 'name status')
+                .populate('tasks', 'title status dueDate');
+
             if (!user) {
                 return res.status(404).json({ message: 'User not found' });
             }
@@ -132,190 +204,364 @@ const userController = {
         }
     },
 
-    // Add new user
+    // Update addUser to handle FormData and role restrictions
     addUser: async (req, res) => {
-        console.log("creating user")
         try {
             const {
                 userId,
                 password,
                 name,
                 email,
-                phoneNumber,
+                phone,
                 department,
                 position,
                 role,
-                salary,
-                bankDetails
-            } = req.body;
-    
-            // Prevent admin from creating superadmin users
-            if (req.user.role === 'admin' && req.body.role === 'superadmin') {
-                if (req.files) {
-                    // Clean up files if provided (but should not create the user)
-                    if (req.files.photo) removeFile(req.files.photo[0].path);
-                    if (req.files.resume) removeFile(req.files.resume[0].path);
-                }
-                return res.status(403).json({
-                    message: 'Admin cannot create superadmin users'
-                });
-            }
-    
-            // Check for existing user
-            const existingUser = await User.findOne({ $or: [{ userId }, { email }] });
-            if (existingUser) {
-                if (req.files) {
-                    // Remove uploaded files if user creation fails
-                    if (req.files.photo) removeFile(req.files.photo[0].path);
-                    if (req.files.resume) removeFile(req.files.resume[0].path);
-                }
-                console.log("User ID or email already exists")
-                return res.status(400).json({ message: 'User ID or email already exists' });
-            }
-    
-            const hashedPassword = await hashPassword(password);
-    
-            const newUser = new User({
-                idNumber: `EMP${Date.now()}`,
-                userId,
-                password: hashedPassword,
-                name,
-                email,
-                phoneNumber,
-                department,
-                position,
-                dateOfJoining: new Date(),
-                role,
+                designation,
                 salary,
                 bankDetails,
-                // Only set photo and resume if files are uploaded
-                photo: req.files?.photo ? req.files.photo[0].path : undefined,
-                resume: req.files?.resume ? req.files.resume[0].path : undefined
-            });
-    
-            await newUser.save();
-            res.status(201).json({
-                message: 'User created successfully',
-                user: {
-                    ...newUser._doc,
-                    password: undefined
-                }
-            });
-        } catch (error) {
-            if (req.files) {
-                // Clean up uploaded files if creation fails
-                if (req.files.photo) removeFile(req.files.photo[0].path);
-                if (req.files.resume) removeFile(req.files.resume[0].path);
-            }
-            console.log("error creating user :", error)
-            res.status(500).json({ message: error.message });
-        }
-    },
-    
-    updateUserById: async (req, res) => {
-        try {
-            console.log("updating the details of", req.params.id)
-            const user = await User.findById(req.params.id);
-    
-            if (!user) {
-                // Clean up uploaded files if user not found
+                skills,
+                reportingTo,
+                allowedWifiNetworks
+            } = req.body;
+
+            // Role restriction checks
+            if (req.user.role === 'admin' && role === 'superadmin') {
                 if (req.files) {
                     if (req.files.photo) removeFile(req.files.photo[0].path);
                     if (req.files.resume) removeFile(req.files.resume[0].path);
                 }
-                return res.status(404).json({ message: 'User not found' });
-            }
-    
-            // Prevent admin from updating superadmin users
-            if (req.user.role === 'admin' && (user.role === 'superadmin' || req.body.role === 'superadmin')) {
-                if (req.files) {
-                    // Remove files if provided
-                    if (req.files.photo) removeFile(req.files.photo[0].path);
-                    if (req.files.resume) removeFile(req.files.resume[0].path);
-                }
-                return res.status(403).json({
-                    message: 'Admin cannot modify superadmin users'
+                return res.status(403).json({ 
+                    message: 'Admin cannot create superadmin users' 
                 });
             }
-    
-            // Handle file updates if files are provided
+
+            // Check for existing user
+            const existingUser = await User.findOne({ 
+                $or: [
+                    { userId }, 
+                    { email }
+                ] 
+            });
+
+            if (existingUser) {
+                if (req.files) {
+                    if (req.files.photo) removeFile(req.files.photo[0].path);
+                    if (req.files.resume) removeFile(req.files.resume[0].path);
+                }
+                return res.status(400).json({ 
+                    message: 'User ID or email already exists' 
+                });
+            }
+
+            // Handle file uploads
+            let photo = null;
+            let resume = null;
+
             if (req.files) {
                 if (req.files.photo) {
-                    if (user.photo) removeFile(user.photo); // Remove old photo if it exists
-                    user.photo = req.files.photo[0].path;  // Update with new photo
+                    photo = req.files.photo[0].path;
                 }
                 if (req.files.resume) {
-                    if (user.resume) removeFile(user.resume); // Remove old resume if it exists
-                    user.resume = req.files.resume[0].path;  // Update with new resume
+                    resume = {
+                        filename: req.files.resume[0].originalname,
+                        fileUrl: req.files.resume[0].path,
+                        uploadDate: new Date()
+                    };
                 }
             }
-    
-            // Handle password update if provided
-            if (req.body.password) {
-                req.body.password = await hashPassword(req.body.password);
-            }
-    
-            // Update other fields
-            Object.keys(req.body).forEach(key => {
-                user[key] = req.body[key];
+
+            // Parse JSON strings from FormData
+            const parsedSkills = skills ? JSON.parse(skills) : [];
+            const parsedWifiNetworks = allowedWifiNetworks ? JSON.parse(allowedWifiNetworks) : [];
+            const parsedSalary = salary ? Number(salary) : 0;
+
+            const user = new User({
+                userId,
+                password,
+                name,
+                email,
+                phone,
+                department,
+                position,
+                role: role || 'employee',
+                designation,
+                salary: parsedSalary,
+                bankDetails,
+                dateOfJoining: new Date(),
+                skills: parsedSkills,
+                photo,
+                resume,
+                reportingTo,
+                allowedWifiNetworks: parsedWifiNetworks,
+                createdBy: req.user._id
             });
-    
+
             await user.save();
-            res.json({ message: 'User updated successfully', user: { ...user._doc, password: undefined } });
+
+            res.status(201).json({
+                success: true,
+                data: user
+            });
         } catch (error) {
+            // Clean up uploaded files if user creation fails
             if (req.files) {
-                // Clean up uploaded files if update fails
                 if (req.files.photo) removeFile(req.files.photo[0].path);
                 if (req.files.resume) removeFile(req.files.resume[0].path);
             }
             res.status(500).json({ message: error.message });
         }
-    }
-,    
-    // Delete user
-    deleteUserById: async (req, res) => {
+    },
+
+    // Update updateUser to handle role restrictions
+    updateUser: async (req, res) => {
         try {
+            const userId = req.params.id;
+            const updates = { ...req.body };
+            
+            // Get the target user
+            const targetUser = await User.findById(userId);
+            if (!targetUser) {
+                return res.status(404).json({ message: 'User not found' });
+            }
+
+            // Role update restrictions
+            if (updates.role) {
+                // Only superadmin can change roles to/from superadmin
+                if ((updates.role === 'superadmin' || targetUser.role === 'superadmin') && 
+                    req.user.role !== 'superadmin') {
+                    return res.status(403).json({ 
+                        message: 'Only superadmin can modify superadmin role' 
+                    });
+                }
+
+                // Admin cannot change other admin roles
+                if (req.user.role === 'admin' && targetUser.role === 'admin') {
+                    return res.status(403).json({ 
+                        message: 'Admin cannot modify other admin roles' 
+                    });
+                }
+            }
+
+            // Sensitive field restrictions
+            if (req.user.role !== 'superadmin' && req.user.role !== 'admin') {
+                // Remove sensitive fields if not admin/superadmin
+                delete updates.salary;
+                delete updates.bankDetails;
+                delete updates.role;
+            }
+
+            // Handle reportingTo field
+            if (updates.reportingTo) {
+                if (typeof updates.reportingTo === 'string') {
+                    try {
+                        const reportingToObj = JSON.parse(updates.reportingTo);
+                        updates.reportingTo = reportingToObj._id;
+                    } catch (e) {
+                        // If it's already an ID string, keep it as is
+                        if (!/^[0-9a-fA-F]{24}$/.test(updates.reportingTo)) {
+                            delete updates.reportingTo;
+                        }
+                    }
+                } else if (typeof updates.reportingTo === 'object' && updates.reportingTo._id) {
+                    updates.reportingTo = updates.reportingTo._id;
+                } else {
+                    delete updates.reportingTo;
+                }
+            }
+
+            // Handle arrays and embedded documents
+            const arrayFields = ['skills', 'allowedWifiNetworks', 'attendance', 'performance', 'dailyReports', 'projects', 'tasks'];
+            arrayFields.forEach(field => {
+                if (field in updates) {
+                    // If it's a string representation of an array, parse it
+                    if (typeof updates[field] === 'string') {
+                        try {
+                            updates[field] = JSON.parse(updates[field]);
+                        } catch (e) {
+                            // If parsing fails and it's skills, treat as comma-separated
+                            if (field === 'skills') {
+                                updates[field] = updates[field].split(',').map(s => s.trim()).filter(Boolean);
+                            } else {
+                                // For other arrays, if parsing fails, remove the field
+                                delete updates[field];
+                            }
+                        }
+                    }
+                    // If the field is an empty array string or null, remove it
+                    if (updates[field] === '[]' || updates[field] === null) {
+                        delete updates[field];
+                    }
+                }
+            });
+
+            // Handle nested objects
+            const objectFields = ['bankDetails', 'emergencyContact', 'loginDetails'];
+            objectFields.forEach(field => {
+                if (field in updates && typeof updates[field] === 'string') {
+                    try {
+                        updates[field] = JSON.parse(updates[field]);
+                    } catch (e) {
+                        delete updates[field];
+                    }
+                }
+            });
+
+            // Convert date strings to Date objects
+            const dateFields = ['dateOfBirth', 'dateOfJoining'];
+            dateFields.forEach(field => {
+                if (updates[field]) {
+                    try {
+                        updates[field] = new Date(updates[field]);
+                    } catch (e) {
+                        delete updates[field];
+                    }
+                }
+            });
+
+            // Handle salary as number
+            if ('salary' in updates) {
+                updates.salary = Number(updates.salary) || delete updates.salary;
+            }
+
+            // Remove empty or null values
+            Object.keys(updates).forEach(key => {
+                if (updates[key] === null || updates[key] === '' || updates[key] === undefined) {
+                    delete updates[key];
+                }
+            });
+
+            // Handle file uploads
+            if (req.files) {
+                if (req.files.photo) {
+                    // Remove old photo if exists
+                    if (targetUser.photo) {
+                        removeFile(path.join(__dirname, '../../uploads/photos', targetUser.photo));
+                    }
+                    updates.photo = req.files.photo[0].filename;
+                }
+                if (req.files.resume) {
+                    // Remove old resume if exists
+                    if (targetUser.resume) {
+                        removeFile(path.join(__dirname, '../../uploads/resumes', targetUser.resume));
+                    }
+                    updates.resume = {
+                        filename: req.files.resume[0].originalname,
+                        fileUrl: req.files.resume[0].filename,
+                        uploadDate: new Date()
+                    };
+                }
+            }
+
+            // Update user with proper MongoDB operator
+            const updatedUser = await User.findByIdAndUpdate(
+                userId,
+                { $set: updates },
+                { 
+                    new: true, 
+                    runValidators: true,
+                    // This option ensures proper handling of arrays
+                    arrayFilters: [],
+                    // This ensures proper type casting
+                    strict: true
+                }
+            )
+            .select('-password')
+            .populate('reportingTo', 'name email employeeId')
+            .populate('projects', 'name status')
+            .populate('tasks', 'title status dueDate');
+
+            if (!updatedUser) {
+                return res.status(404).json({ message: 'User not found after update' });
+            }
+
+            res.json(updatedUser);
+        } catch (error) {
+            console.error('Update error:', error);
+            res.status(500).json({ message: error.message });
+        }
+    },
+
+    // Change password
+    changePassword: async (req, res) => {
+        try {
+            const { currentPassword, newPassword } = req.body;
             const user = await User.findById(req.params.id);
+
             if (!user) {
                 return res.status(404).json({ message: 'User not found' });
             }
 
-            // Remove associated files
-            if (user.photo) removeFile(user.photo);
-            if (user.resume) removeFile(user.resume);
+            const isMatch = await user.comparePassword(currentPassword);
+            if (!isMatch) {
+                return res.status(401).json({ message: 'Current password is incorrect' });
+            }
 
-            await User.findByIdAndDelete(req.params.id);
-            res.json({ message: 'User deleted successfully' });
+            user.password = newPassword;
+            await user.save();
+
+            res.json({ message: 'Password updated successfully' });
+        } catch (error) {
+            res.status(400).json({ message: error.message });
+        }
+    },
+
+    // Delete user
+    deleteUser: async (req, res) => {
+        try {
+            const user = await User.findById(req.params.id);
+
+            if (!user) {
+                return res.status(404).json({ message: 'User not found' });
+            }
+
+            // Delete associated files
+            if (user.photo) {
+                removeFile(user.photo);
+            }
+            if (user.resume?.fileUrl) {
+                removeFile(user.resume.fileUrl);
+            }
+
+            await user.remove();
+
+            res.json({
+                success: true,
+                message: 'User deleted successfully'
+            });
         } catch (error) {
             res.status(500).json({ message: error.message });
         }
     },
 
-    // Update user status
-    updateStatusUserById: async (req, res) => {
+    // Get user performance
+    getUserPerformance: async (req, res) => {
         try {
-            const { status } = req.body;
-            if (!['active', 'inactive', 'archived'].includes(status)) {
-                return res.status(400).json({ message: 'Invalid status' });
-            }
-
-            const user = await User.findByIdAndUpdate(
-                req.params.id,
-                { status },
-                { new: true }
-            );
-
-            if (req.user.role === 'admin' && user.role === 'superadmin') {
-                return res.status(403).json({ 
-                    message: 'Admin cannot modify superadmin status' 
-                });
-            }
+            const { startDate, endDate } = req.query;
+            const user = await User.findById(req.params.id);
 
             if (!user) {
                 return res.status(404).json({ message: 'User not found' });
             }
 
-            res.json({ message: 'Status updated successfully', user });
+            const performance = {
+                totalPoints: user.totalPoints,
+                attendancePercentage: user.calculateAttendancePercentage(
+                    new Date(startDate),
+                    new Date(endDate)
+                ),
+                performanceScore: user.calculatePerformanceScore(
+                    new Date(startDate),
+                    new Date(endDate)
+                ),
+                details: user.performance.filter(p =>
+                    p.date >= new Date(startDate) && p.date <= new Date(endDate)
+                )
+            };
+
+            res.json({
+                success: true,
+                data: performance
+            });
         } catch (error) {
             res.status(500).json({ message: error.message });
         }
@@ -323,6 +569,7 @@ const userController = {
 };
 
 module.exports = userController;
+
 
 
 
