@@ -4,7 +4,7 @@ const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { loginAuth, teamLeadAuth, adminAuth } = require('../../middleware/auth');
+const { authenticate, authorize, adminAuth } = require('../../middleware/auth');
 const taskController = require('../../controllers/admin/taskController');
 
 // Create uploads directory for task files
@@ -33,17 +33,54 @@ const upload = multer({
 });
 
 // Task routes
-router.get('/', loginAuth, taskController.getTaskAll);
-router.get('/:id', loginAuth, taskController.getTaskById);
-router.get('/user/:id', loginAuth, taskController.getTaskAllByUserId);
-router.get('/deadline/:date', loginAuth, taskController.getTaskByDeadline);
-router.post('/', loginAuth, upload.array('files', 5), taskController.addTask);
-router.put('/:id', loginAuth, upload.array('files', 5), taskController.updateTask);
-router.delete('/:id', loginAuth, adminAuth, taskController.deleteTask);
-router.put('/:id/status', loginAuth, taskController.updateTaskStatus);
-router.put('/:id/approve', loginAuth, teamLeadAuth, taskController.updateTaskisCompletedApprove);
-router.get('/analytics/self', loginAuth, taskController.getAnalyticsByUserIdSelf);
-router.get('/analytics/assigned', loginAuth, taskController.getAnalyticsByUserIdAssigned);
+router.get('/', authenticate, taskController.getTaskAll);
+router.get('/:id', authenticate, taskController.getTaskById);
+router.get('/user/:id', authenticate, taskController.getTaskAllByUserId);
+router.get('/deadline/:date', authenticate, taskController.getTaskByDeadline);
+
+// Task management routes
+router.post('/', 
+  authenticate, 
+  authorize(['admin', 'teamlead', 'manager']), 
+  upload.array('files', 5), 
+  taskController.addTask
+);
+
+router.put('/:id', 
+  authenticate, 
+  authorize(['admin', 'teamlead', 'manager']), 
+  upload.array('files', 5), 
+  taskController.updateTask
+);
+
+router.delete('/:id', 
+  authenticate, 
+  authorize(['admin', 'superadmin']), 
+  taskController.deleteTask
+);
+
+// Task status routes
+router.put('/:id/status', 
+  authenticate, 
+  taskController.updateTaskStatus
+);
+
+router.put('/:id/approve', 
+  authenticate, 
+  authorize(['admin', 'teamlead', 'manager']), 
+  taskController.updateTaskisCompletedApprove
+);
+
+// Analytics routes
+router.get('/analytics/self', 
+  authenticate, 
+  taskController.getAnalyticsByUserIdSelf
+);
+
+router.get('/analytics/assigned', 
+  authenticate, 
+  taskController.getAnalyticsByUserIdAssigned
+);
 
 module.exports = router;
 

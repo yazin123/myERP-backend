@@ -26,7 +26,7 @@ const userController = {
     login: async (req, res) => {
         try {
             const { userId, password } = req.body;
-            const user = await User.findOne({ userId });
+            let user = await User.findOne({ userId });
     
             if (!user) {
                 return res.status(401).json({ message: 'Invalid credentials' });
@@ -41,11 +41,18 @@ const userController = {
                 return res.status(401).json({ message: 'Account is not active' });
             }
     
+            // Ensure bankDetails is properly handled
+            if (!user.bankDetails || user.bankDetails === 'N/A') {
+                user.bankDetails = null;
+            }
+
             user.loginDetails = {
                 lastLogin: new Date(),
                 loginCount: (user.loginDetails?.loginCount || 0) + 1
             };
-            await user.save();
+
+            // Use save with validation
+            await user.save({ validateBeforeSave: true });
     
             const token = jwt.sign(
                 { 
@@ -77,6 +84,7 @@ const userController = {
     // Get all users with search and filters
     getAllUsers: async (req, res) => {
         try {
+            console.log("getAllUsers", req.query);
             const {
                 page = 1,
                 limit = 10,
@@ -223,18 +231,18 @@ const userController = {
                 reportingTo,
                 allowedWifiNetworks
             } = req.body;
-
+    
             // Role restriction checks
             if (req.user.role === 'admin' && role === 'superadmin') {
                 if (req.files) {
                     if (req.files.photo) removeFile(req.files.photo[0].path);
                     if (req.files.resume) removeFile(req.files.resume[0].path);
                 }
-                return res.status(403).json({ 
-                    message: 'Admin cannot create superadmin users' 
+                return res.status(403).json({
+                    message: 'Admin cannot create superadmin users'
                 });
             }
-
+    
             // Check for existing user
             const existingUser = await User.findOne({ 
                 $or: [
@@ -267,7 +275,7 @@ const userController = {
                         fileUrl: req.files.resume[0].path,
                         uploadDate: new Date()
                     };
-                }
+            }
             }
 
             // Parse JSON strings from FormData
@@ -295,7 +303,7 @@ const userController = {
                 allowedWifiNetworks: parsedWifiNetworks,
                 createdBy: req.user._id
             });
-
+    
             await user.save();
 
             res.status(201).json({
@@ -311,10 +319,12 @@ const userController = {
             res.status(500).json({ message: error.message });
         }
     },
-
+    
     // Update updateUser to handle role restrictions
     updateUser: async (req, res) => {
         try {
+            console.log("updateUser - Request Body:", req.body);
+            console.log("updateUser - Files:", req.files);
             const userId = req.params.id;
             const updates = { ...req.body };
             
@@ -323,6 +333,12 @@ const userController = {
             if (!targetUser) {
                 return res.status(404).json({ message: 'User not found' });
             }
+    
+            console.log("updateUser - Target User:", {
+                id: targetUser._id,
+                role: targetUser.role,
+                currentUserRole: req.user.role
+            });
 
             // Role update restrictions
             if (updates.role) {
@@ -336,7 +352,7 @@ const userController = {
 
                 // Admin cannot change other admin roles
                 if (req.user.role === 'admin' && targetUser.role === 'admin') {
-                    return res.status(403).json({ 
+                    return res.status(403).json({
                         message: 'Admin cannot modify other admin roles' 
                     });
                 }
@@ -368,7 +384,7 @@ const userController = {
                     delete updates.reportingTo;
                 }
             }
-
+    
             // Handle arrays and embedded documents
             const arrayFields = ['skills', 'allowedWifiNetworks', 'attendance', 'performance', 'dailyReports', 'projects', 'tasks'];
             arrayFields.forEach(field => {
@@ -423,12 +439,15 @@ const userController = {
                 updates.salary = Number(updates.salary) || delete updates.salary;
             }
 
-            // Remove empty or null values
+            // Remove empty or null values but keep falsy values that might be intentional
             Object.keys(updates).forEach(key => {
-                if (updates[key] === null || updates[key] === '' || updates[key] === undefined) {
+                if (updates[key] === null || updates[key] === undefined) {
                     delete updates[key];
                 }
             });
+
+            // Debug: Log the final updates object
+            console.log('Final updates object:', updates);
 
             // Handle file uploads
             if (req.files) {
@@ -459,9 +478,6 @@ const userController = {
                 { 
                     new: true, 
                     runValidators: true,
-                    // This option ensures proper handling of arrays
-                    arrayFilters: [],
-                    // This ensures proper type casting
                     strict: true
                 }
             )
@@ -474,10 +490,22 @@ const userController = {
                 return res.status(404).json({ message: 'User not found after update' });
             }
 
+            // Debug: Log the updated user
+            console.log('Updated user:', updatedUser);
+
             res.json(updatedUser);
         } catch (error) {
-            console.error('Update error:', error);
-            res.status(500).json({ message: error.message });
+            console.error('Update error details:', {
+                name: error.name,
+                message: error.message,
+                stack: error.stack,
+                validationErrors: error.errors
+            });
+            // Send back more detailed error information
+            res.status(400).json({ 
+                message: error.message,
+                validationErrors: error.errors
+            });
         }
     },
 

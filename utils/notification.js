@@ -1,152 +1,176 @@
+const WebSocket = require('ws');
+const jwt = require('jsonwebtoken');
+const logger = require('./logger');
 const User = require('../models/User');
+const { AppError } = require('../middleware/errorHandler');
 
-// In-memory notification queue for processing
-const notificationQueue = [];
-
-// Function to create and send a notification
-exports.createNotification = async ({ userId, type, message, reference }) => {
-    try {
-        const notification = {
-            userId,
-            type,
-            message,
-            reference,
-            timestamp: new Date(),
-            read: false
-        };
-
-        // Add to queue for processing
-        notificationQueue.push(notification);
-
-        // Process notification (in real implementation, this would be handled by a message queue)
-        await processNotification(notification);
-
-        return notification;
-    } catch (error) {
-        console.log('Error creating notification:', error);
-        throw error;
+class NotificationService {
+    constructor() {
+        this.clients = new Map(); // userId -> WebSocket
+        this.server = null;
     }
-};
 
-// Process notification based on type
-const processNotification = async (notification) => {
-    try {
-        const user = await User.findById(notification.userId);
-        if (!user) {
-            console.log(`User not found for notification: ${notification.userId}`);
-            return;
-        }
+    initialize(server) {
+        this.server = new WebSocket.Server({ server });
 
-        // Here you would implement different notification channels
-        // For example: email, push notification, in-app notification, etc.
-        
-        switch (notification.type) {
-            case 'project_assignment':
-                await sendProjectAssignmentNotification(user, notification);
-                break;
-            case 'task_assignment':
-                await sendTaskAssignmentNotification(user, notification);
-                break;
-            case 'project_update':
-                await sendProjectUpdateNotification(user, notification);
-                break;
-            case 'deadline_reminder':
-                await sendDeadlineReminderNotification(user, notification);
-                break;
-            default:
-                await sendDefaultNotification(user, notification);
-        }
-    } catch (error) {
-        console.log('Error processing notification:', error);
-        throw error;
+        this.server.on('connection', async (ws, req) => {
+            try {
+                // Get token from query string
+                const token = new URL(req.url, 'ws://localhost').searchParams.get('token');
+                if (!token) {
+                    throw new AppError('No authentication token provided', 401);
+                }
+
+                // Verify token
+                const decoded = jwt.verify(token, process.env.JWT_SECRET);
+                const user = await User.findById(decoded.userId);
+                
+                if (!user) {
+                    throw new AppError('User not found', 404);
+                }
+
+                // Store client connection
+                this.clients.set(user._id.toString(), ws);
+                logger.info(`Client connected: ${user._id}`);
+
+                // Handle client messages
+                ws.on('message', (message) => {
+                    try {
+                        const data = JSON.parse(message);
+                        logger.debug(`Received message from ${user._id}:`, data);
+                    } catch (error) {
+                        logger.error('Error processing message:', error);
+                    }
+                });
+
+                // Handle client disconnection
+                ws.on('close', () => {
+                    this.clients.delete(user._id.toString());
+                    logger.info(`Client disconnected: ${user._id}`);
+                });
+
+                // Send initial connection success message
+                this.sendToUser(user._id, {
+                    type: 'connection',
+                    message: 'Successfully connected to notification service'
+                });
+
+            } catch (error) {
+                logger.error('WebSocket connection error:', error);
+                ws.close();
+            }
+        });
+
+        // Handle server errors
+        this.server.on('error', (error) => {
+            logger.error('WebSocket server error:', error);
+        });
     }
-};
 
-// Notification type handlers
-const sendProjectAssignmentNotification = async (user, notification) => {
-    // TODO: Implement email notification
-    console.log(`Project assignment notification for ${user.email}: ${notification.message}`);
-    
-    // TODO: Implement push notification
-    console.log(`Push notification sent to ${user.email}`);
-};
+    // Send notification to specific user
+    async sendToUser(userId, notification) {
+        try {
+            const ws = this.clients.get(userId.toString());
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    ...notification,
+                    timestamp: new Date()
+                }));
+                return true;
+            }
+            return false;
+        } catch (error) {
+            logger.error(`Error sending notification to user ${userId}:`, error);
+            return false;
+        }
+    }
 
-const sendTaskAssignmentNotification = async (user, notification) => {
-    // TODO: Implement email notification
-    console.log(`Task assignment notification for ${user.email}: ${notification.message}`);
-    
-    // TODO: Implement push notification
-    console.log(`Push notification sent to ${user.email}`);
-};
-
-const sendProjectUpdateNotification = async (user, notification) => {
-    // TODO: Implement email notification
-    console.log(`Project update notification for ${user.email}: ${notification.message}`);
-    
-    // TODO: Implement push notification
-    console.log(`Push notification sent to ${user.email}`);
-};
-
-const sendDeadlineReminderNotification = async (user, notification) => {
-    // TODO: Implement email notification
-    console.log(`Deadline reminder notification for ${user.email}: ${notification.message}`);
-    
-    // TODO: Implement push notification
-    console.log(`Push notification sent to ${user.email}`);
-};
-
-const sendDefaultNotification = async (user, notification) => {
-    // TODO: Implement email notification
-    console.log(`Default notification for ${user.email}: ${notification.message}`);
-    
-    // TODO: Implement push notification
-    console.log(`Push notification sent to ${user.email}`);
-};
-
-// Function to get unread notifications for a user
-exports.getUnreadNotifications = async (userId) => {
-    try {
-        return notificationQueue.filter(n => 
-            n.userId.toString() === userId.toString() && !n.read
+    // Send notification to multiple users
+    async sendToUsers(userIds, notification) {
+        const results = await Promise.all(
+            userIds.map(userId => this.sendToUser(userId, notification))
         );
-    } catch (error) {
-        console.log('Error getting unread notifications:', error);
-        throw error;
+        return results.filter(Boolean).length;
     }
-};
 
-// Function to mark notification as read
-exports.markNotificationAsRead = async (notificationId, userId) => {
-    try {
-        const notification = notificationQueue.find(n => 
-            n.userId.toString() === userId.toString() && 
-            n._id.toString() === notificationId.toString()
-        );
-
-        if (notification) {
-            notification.read = true;
-            return true;
+    // Send notification to all connected clients
+    async broadcast(notification, excludeUserId = null) {
+        let sentCount = 0;
+        for (const [userId, ws] of this.clients.entries()) {
+            if (excludeUserId && userId === excludeUserId.toString()) {
+                continue;
+            }
+            if (await this.sendToUser(userId, notification)) {
+                sentCount++;
+            }
         }
-        return false;
-    } catch (error) {
-        console.log('Error marking notification as read:', error);
-        throw error;
+        return sentCount;
     }
-};
 
-// Function to clear old notifications (older than 30 days)
-exports.clearOldNotifications = () => {
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    // Create and send project notification
+    async createProjectNotification(data) {
+        try {
+            const { type, projectId, message, userIds = [] } = data;
+            
+            const notification = {
+                type: `project_${type}`,
+                projectId,
+                message,
+                timestamp: new Date()
+            };
 
-    const oldNotifications = notificationQueue.filter(n => 
-        n.timestamp < thirtyDaysAgo
-    );
-
-    oldNotifications.forEach(n => {
-        const index = notificationQueue.indexOf(n);
-        if (index > -1) {
-            notificationQueue.splice(index, 1);
+            // Send to specific users if provided, otherwise broadcast
+            if (userIds.length > 0) {
+                return await this.sendToUsers(userIds, notification);
+            } else {
+                return await this.broadcast(notification);
+            }
+        } catch (error) {
+            logger.error('Error creating project notification:', error);
+            return 0;
         }
-    });
-}; 
+    }
+
+    // Create and send task notification
+    async createTaskNotification(data) {
+        try {
+            const { type, taskId, projectId, message, userIds = [] } = data;
+            
+            const notification = {
+                type: `task_${type}`,
+                taskId,
+                projectId,
+                message,
+                timestamp: new Date()
+            };
+
+            return await this.sendToUsers(userIds, notification);
+        } catch (error) {
+            logger.error('Error creating task notification:', error);
+            return 0;
+        }
+    }
+
+    // Create and send user notification
+    async createUserNotification(data) {
+        try {
+            const { type, userId, message } = data;
+            
+            const notification = {
+                type: `user_${type}`,
+                message,
+                timestamp: new Date()
+            };
+
+            return await this.sendToUser(userId, notification);
+        } catch (error) {
+            logger.error('Error creating user notification:', error);
+            return false;
+        }
+    }
+}
+
+// Create singleton instance
+const notificationService = new NotificationService();
+
+module.exports = notificationService; 

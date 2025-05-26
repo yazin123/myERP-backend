@@ -1,6 +1,7 @@
 // models/userModel.js
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 
 const resumeSchema = new mongoose.Schema({
     filename: { type: String, required: true },
@@ -44,9 +45,36 @@ const dailyReportSchema = new mongoose.Schema({
 
 // Bank details schema
 const bankDetailsSchema = new mongoose.Schema({
-    bankName: String,
-    accountNumber: String,
-    ifscCode: String
+    accountName: {
+        type: String,
+        trim: true,
+        default: null
+    },
+    accountNumber: {
+        type: String,
+        trim: true,
+        default: null
+    },
+    bankName: {
+        type: String,
+        trim: true,
+        default: null
+    },
+    branchCode: {
+        type: String,
+        trim: true,
+        default: null
+    },
+    ifscCode: {
+        type: String,
+        trim: true,
+        default: null
+    }
+}, { 
+    _id: false,
+    strict: true,
+    toJSON: { getters: true },
+    toObject: { getters: true }
 });
 
 // Emergency contact schema
@@ -61,7 +89,7 @@ const userSchema = new mongoose.Schema({
     userId: {
         type: String,
         required: true,
-        unique: true
+        index: true
     },
     password: {
         type: String,
@@ -81,7 +109,7 @@ const userSchema = new mongoose.Schema({
     email: {
         type: String,
         required: true,
-        unique: true
+        index: true
     },
     phone: {
         type: String,
@@ -111,7 +139,7 @@ const userSchema = new mongoose.Schema({
     // Employment Information
     employeeId: {
         type: String,
-        unique: true,
+        index: true,
         sparse: true
     },
     designation: {
@@ -135,7 +163,16 @@ const userSchema = new mongoose.Schema({
     salary: {
         type: Number
     },
-    bankDetails: bankDetailsSchema,
+    bankDetails: {
+        type: bankDetailsSchema,
+        default: null,
+        set: function(v) {
+            if (!v || v === 'N/A' || (typeof v === 'object' && Object.keys(v).length === 0)) {
+                return null;
+            }
+            return v;
+        }
+    },
 
     // Employee-specific fields
     skills: [{
@@ -185,15 +222,22 @@ const userSchema = new mongoose.Schema({
     updatedBy: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User'
-    }
+    },
+
+    // New fields from the updated code
+    passwordChangedAt: Date,
+    passwordResetToken: String,
+    passwordResetExpires: Date,
+    loginAttempts: {
+        type: Number,
+        default: 0
+    },
+    lockUntil: Date
 }, {
     timestamps: true
 });
 
 // Indexes for better query performance
-userSchema.index({ userId: 1 });
-userSchema.index({ email: 1 });
-userSchema.index({ employeeId: 1 });
 userSchema.index({ designation: 1 });
 userSchema.index({ department: 1 });
 userSchema.index({ role: 1 });
@@ -240,11 +284,32 @@ userSchema.pre('save', async function(next) {
             this.employeeId = await generateEmployeeId.call(this);
         }
 
+        // Update passwordChangedAt when password is changed
+        if (this.isModified('password') || this.isNew) {
+            this.passwordChangedAt = Date.now() - 1000;
+        }
+
+        // Handle bank details
+        if (this.isModified('bankDetails')) {
+            if (!this.bankDetails || this.bankDetails === 'N/A' || 
+                (typeof this.bankDetails === 'object' && Object.keys(this.bankDetails).length === 0)) {
+                this.bankDetails = null;
+            }
+        }
+
         next();
     } catch (error) {
         next(error);
     }
 });
+
+// Static method to format bank details
+userSchema.statics.formatBankDetails = function(details) {
+    if (!details || details === 'N/A' || (typeof details === 'object' && Object.keys(details).length === 0)) {
+        return null;
+    }
+    return details;
+};
 
 // Method to check password
 userSchema.methods.comparePassword = async function(candidatePassword) {
@@ -288,6 +353,80 @@ userSchema.methods.checkDailyReportSubmission = function(date) {
     
     return submissionTime <= deadline;
 };
+
+// Methods from the updated code
+userSchema.methods.changedPasswordAfter = function(JWTTimestamp) {
+    if (this.passwordChangedAt) {
+        const changedTimestamp = parseInt(this.passwordChangedAt.getTime() / 1000, 10);
+        return JWTTimestamp < changedTimestamp;
+    }
+    return false;
+};
+
+userSchema.methods.createPasswordResetToken = function() {
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    
+    this.passwordResetToken = crypto
+        .createHash('sha256')
+        .update(resetToken)
+        .digest('hex');
+    
+    this.passwordResetExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
+    
+    return resetToken;
+};
+
+userSchema.methods.incrementLoginAttempts = async function() {
+    // If lock has expired, reset attempts and remove lock
+    if (this.lockUntil && this.lockUntil < Date.now()) {
+        return this.updateOne({
+            $set: {
+                loginAttempts: 1
+            },
+            $unset: {
+                lockUntil: 1
+            }
+        });
+    }
+
+    // Otherwise increment attempts
+    const updates = {
+        $inc: {
+            loginAttempts: 1
+        }
+    };
+
+    // Lock account if attempts reach 5
+    if (this.loginAttempts + 1 >= 5) {
+        updates.$set = {
+            lockUntil: Date.now() + 60 * 60 * 1000 // 1 hour lock
+        };
+    }
+
+    return this.updateOne(updates);
+};
+
+userSchema.methods.resetLoginAttempts = function() {
+    return this.updateOne({
+        $set: { loginAttempts: 0 },
+        $unset: { lockUntil: 1 }
+    });
+};
+
+// Virtual for full address
+userSchema.virtual('fullAddress').get(function() {
+    if (!this.address) return '';
+    
+    const parts = [
+        this.address.street,
+        this.address.city,
+        this.address.state,
+        this.address.country,
+        this.address.postalCode
+    ];
+    
+    return parts.filter(Boolean).join(', ');
+});
 
 module.exports = mongoose.model('User', userSchema);
 

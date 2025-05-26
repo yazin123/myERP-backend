@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const path = require('path');
-const { loginAuth, checkAccessProject, apiLimiter, authenticate, authorize } = require('../../middleware/auth');
+const { authenticate, authorize, adminAuth } = require('../../middleware/auth');
 const projectController = require('../../controllers/admin/projectController');
 const fs = require('fs');
 
@@ -20,21 +20,21 @@ const storage = multer.diskStorage({
 });
 
 const fileFilter = (req, file, cb) => {
-    const allowedTypes = [
-        'image/jpeg',
-        'image/png',
-        'application/pdf',
-        'application/msword',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'application/vnd.ms-excel',
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    ];
-
-    if (allowedTypes.includes(file.mimetype)) {
-        cb(null, true);
-    } else {
-        cb(new Error('Invalid file type. Only images, PDFs, and Office documents are allowed.'), false);
-    }
+        const allowedTypes = [
+            'image/jpeg', 
+            'image/png', 
+            'application/pdf',
+            'application/msword',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.ms-excel',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        ];
+        
+        if (allowedTypes.includes(file.mimetype)) {
+            cb(null, true);
+        } else {
+            cb(new Error('Invalid file type. Only images, PDFs, and Office documents are allowed.'), false);
+        }
 };
 
 const upload = multer({
@@ -77,8 +77,9 @@ const handleMulterError = (err, req, res, next) => {
 
 // Routes
 router.get('/', authenticate, projectController.getAllProjects);
-router.get('/:id', authenticate, projectController.getProjectById);
-router.get('/assigned', loginAuth, projectController.getAssignedProjects);
+router.get('/filter', authenticate, projectController.getProjects);
+router.get('/assigned', authenticate, projectController.getAssignedProjects);
+router.get('/:id', authenticate, projectController.getProject);
 
 // Create and Update routes with file handling
 router.post('/', 
@@ -91,27 +92,30 @@ router.post('/',
 
 router.put('/:id', 
     authenticate, 
+    authorize(['admin', 'superadmin', 'manager']),
     upload.array('files'), 
     handleMulterError, 
     projectController.updateProject
 );
 
 router.delete('/:id', 
-    authenticate, 
+    authenticate,
     authorize(['admin', 'superadmin']), 
     projectController.deleteProject
 );
 
 // Update project status
 router.patch('/:id/status', 
-    authenticate, 
+    authenticate,
+    authorize(['admin', 'superadmin', 'manager', 'teamlead']),
     express.json(),
     projectController.updateProjectStatus
 );
 
 // Update project pipeline
 router.patch('/:id/pipeline', 
-    authenticate, 
+    authenticate,
+    authorize(['admin', 'superadmin', 'manager', 'teamlead']),
     express.json(),
     projectController.updateProjectPipeline
 );

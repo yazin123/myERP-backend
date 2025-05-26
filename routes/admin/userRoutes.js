@@ -4,7 +4,7 @@ const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { authenticate, authorize } = require('../../middleware/auth');
+const { authenticate, authorize, adminAuth } = require('../../middleware/auth');
 const userController = require('../../controllers/admin/userController');
 
 // Create uploads directory if it doesn't exist
@@ -69,23 +69,41 @@ const handleMulterError = (err, req, res, next) => {
 // Public routes
 router.post('/login', userController.login);
 
-// Protected routes
+// Protected routes - require admin access
 router.get('/current', authenticate, userController.getCurrentUser);
-router.get('/', authenticate, userController.getAllUsers);
-router.get('/managers', authenticate, userController.getManagers);
-router.get('/:id', authenticate, userController.getUserById);
+router.get('/', adminAuth, userController.getAllUsers);
+router.get('/managers', adminAuth, userController.getManagers);
+router.get('/:id', adminAuth, userController.getUserById);
+router.put('/update/:id', 
+    authenticate, 
+    authorize(['admin', 'superadmin'], { checkUserManagement: true }), 
+    uploadFields, 
+    handleMulterError, 
+    userController.updateUser
+);
 
 // Admin and Superadmin routes with file upload
-router.post('/', authenticate, authorize(['admin', 'superadmin']), uploadFields, handleMulterError, userController.addUser);
-router.put('/:id', authenticate, authorize(['admin', 'superadmin'], { checkUserManagement: true }), uploadFields, handleMulterError, userController.updateUser);
+router.post('/', 
+    authenticate, 
+    authorize(['admin', 'superadmin']), 
+    uploadFields, 
+    handleMulterError, 
+    userController.addUser
+);
+
+
 
 // Superadmin only routes
-router.delete('/:id', authenticate, authorize(['superadmin'], { checkUserManagement: true }), userController.deleteUser);
+router.delete('/:id', 
+    authenticate, 
+    authorize(['superadmin'], { checkUserManagement: true }), 
+    userController.deleteUser
+);
 
 // User's own password change
 router.put('/:id/change-password', authenticate, async (req, res, next) => {
     // Allow users to change their own password, or admins/superadmins to change others
-    if (req.user._id === req.params.id || ['admin', 'superadmin'].includes(req.user.role)) {
+    if (req.user._id.toString() === req.params.id || ['admin', 'superadmin'].includes(req.user.role)) {
         next();
     } else {
         res.status(403).json({ message: 'Not authorized to change this user\'s password' });

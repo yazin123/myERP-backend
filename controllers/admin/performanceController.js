@@ -350,58 +350,127 @@ const performanceController = {
     }
   },
 
-  // Get performance summary by user
+  // Get performance summary for a specific user
   getUserPerformanceSummary: async (req, res) => {
     try {
-      console.log("data is fetching for performance summary == body",req.body)
-      console.log("data is fetching for performance summary == params",req.params)
-      console.log("data is fetching for performance summary == query",req.query)
-      const { userId, month, year } = req.query.params;
-      console.log('Summary request params:', { userId, month, year });
+      const { userId } = req.params;
+      const { startDate, endDate } = req.query;
 
-      if (!userId) {
-        return res.status(400).json({
+      // Validate user exists
+      const user = await User.findById(userId).select('name email department position');
+      if (!user) {
+        return res.status(404).json({
           success: false,
-          message: 'userId is required'
+          message: 'User not found'
         });
       }
 
+      // Build date filter
       let dateFilter = {};
-      if (month && year) {
-        const startDate = new Date(year, month - 1, 1);
-        const endDate = new Date(year, month, 0);
+      if (startDate && endDate) {
         dateFilter = {
           createdDate: {
-            $gte: startDate,
-            $lte: endDate
+            $gte: new Date(startDate),
+            $lte: new Date(endDate)
           }
         };
       }
 
-      const query = {
-        userId: new mongoose.Types.ObjectId(userId),
-        ...dateFilter
-      };
+      // Get performance summary
+      const summary = await Performance.aggregate([
+        {
+          $match: {
+            userId: mongoose.Types.ObjectId(userId),
+            ...dateFilter
+          }
+        },
+        {
+          $group: {
+            _id: '$category',
+            totalPoints: { $sum: '$points' },
+            count: { $sum: 1 },
+            avgPoints: { $avg: '$points' },
+            records: { $push: '$$ROOT' }
+          }
+        },
+        {
+          $project: {
+            category: '$_id',
+            totalPoints: 1,
+            count: 1,
+            avgPoints: 1,
+            lastFiveRecords: { $slice: ['$records', -5] }
+          }
+        }
+      ]);
 
-      console.log('Summary query:', query);
-
-      const summary = await Performance.find(query)
-        .populate('userId', 'name email department position')
-        .sort({ createdDate: -1 });
-
-      console.log(`Found ${summary.length} records for user`);
+      // Get overall stats
+      const overallStats = await Performance.aggregate([
+        {
+          $match: {
+            userId: mongoose.Types.ObjectId(userId),
+            ...dateFilter
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            totalPoints: { $sum: '$points' },
+            totalRecords: { $sum: 1 },
+            avgPoints: { $avg: '$points' },
+            maxPoints: { $max: '$points' },
+            minPoints: { $min: '$points' }
+          }
+        },
+        {
+          $project: {
+            _id: 0,
+            totalPoints: 1,
+            totalRecords: 1,
+            avgPoints: 1,
+            maxPoints: 1,
+            minPoints: 1
+          }
+        }
+      ]);
 
       res.json({
         success: true,
-        data: summary
+        data: {
+          user,
+          categorySummary: summary,
+          overallStats: overallStats[0] || {
+            totalPoints: 0,
+            totalRecords: 0,
+            avgPoints: 0,
+            maxPoints: 0,
+            minPoints: 0
+          }
+        }
       });
 
     } catch (error) {
       console.log('Error in getUserPerformanceSummary:', error);
       res.status(500).json({
         success: false,
-        message: 'Failed to fetch user performance summary',
-        error: error.message
+        message: 'Failed to fetch performance summary',
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      });
+    }
+  },
+
+  // Get own performance summary
+  getOwnPerformanceSummary: async (req, res) => {
+    try {
+      // Use the authenticated user's ID
+      req.params.userId = req.user._id;
+      await performanceController.getUserPerformanceSummary(req, res);
+    } catch (error) {
+      console.log('Error in getOwnPerformanceSummary:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch own performance summary',
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
       });
     }
   }
