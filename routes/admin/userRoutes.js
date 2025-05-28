@@ -59,9 +59,15 @@ const uploadFields = upload.fields([
 // Handle multer errors
 const handleMulterError = (err, req, res, next) => {
     if (err instanceof multer.MulterError) {
-        return res.status(400).json({ message: err.message });
+        return res.status(400).json({ 
+            success: false,
+            message: err.message 
+        });
     } else if (err) {
-        return res.status(400).json({ message: err.message });
+        return res.status(400).json({ 
+            success: false,
+            message: err.message 
+        });
     }
     next();
 };
@@ -71,12 +77,12 @@ router.post('/login', userController.login);
 
 // Protected routes - require admin access
 router.get('/current', authenticate, userController.getCurrentUser);
-router.get('/', adminAuth, userController.getAllUsers);
+router.get('/', authenticate, authorize(['admin', 'superadmin']), userController.getAllUsers);
 router.get('/managers', adminAuth, userController.getManagers);
-router.get('/:id', adminAuth, userController.getUserById);
+router.get('/:id', authenticate, authorize(['admin', 'superadmin']), userController.getUserById);
 router.put('/update/:id', 
     authenticate, 
-    authorize(['admin', 'superadmin'], { checkUserManagement: true }), 
+    authorize(['admin', 'superadmin']), 
     uploadFields, 
     handleMulterError, 
     userController.updateUser
@@ -91,12 +97,10 @@ router.post('/',
     userController.addUser
 );
 
-
-
 // Superadmin only routes
 router.delete('/:id', 
     authenticate, 
-    authorize(['superadmin'], { checkUserManagement: true }), 
+    authorize(['admin', 'superadmin']), 
     userController.deleteUser
 );
 

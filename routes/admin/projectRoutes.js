@@ -6,6 +6,7 @@ const { authenticate, authorize, adminAuth } = require('../../middleware/auth');
 const projectController = require('../../controllers/admin/projectController');
 const fs = require('fs');
 
+
 // Multer configuration
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
@@ -37,7 +38,7 @@ const fileFilter = (req, file, cb) => {
         }
 };
 
-const upload = multer({
+const uploadMulter = multer({
     storage,
     fileFilter,
     limits: {
@@ -76,16 +77,17 @@ const handleMulterError = (err, req, res, next) => {
 };
 
 // Routes
-router.get('/', authenticate, projectController.getAllProjects);
+router.get('/stats', projectController.getProjectStats);
+router.get('/', projectController.getAllProjects);
 router.get('/filter', authenticate, projectController.getProjects);
 router.get('/assigned', authenticate, projectController.getAssignedProjects);
-router.get('/:id', authenticate, projectController.getProject);
+router.get('/:id', projectController.getProjectById);
 
 // Create and Update routes with file handling
 router.post('/', 
     authenticate, 
     authorize(['admin', 'superadmin', 'manager']), 
-    upload.array('files'), 
+    uploadMulter.array('files'), 
     handleMulterError, 
     projectController.createProject
 );
@@ -93,7 +95,7 @@ router.post('/',
 router.put('/:id', 
     authenticate, 
     authorize(['admin', 'superadmin', 'manager']),
-    upload.array('files'), 
+    uploadMulter.array('files'), 
     handleMulterError, 
     projectController.updateProject
 );
@@ -126,6 +128,78 @@ router.get(
     authenticate,
     authorize(['admin', 'teamlead', 'projectmanager']),
     projectController.getTeamMembersByTechStack
+);
+
+// Project Tasks
+router.get('/:id/tasks', 
+    authenticate, 
+    projectController.getProjectTasks
+);
+
+router.post('/:id/tasks', 
+    authenticate, 
+    authorize(['admin', 'superadmin', 'manager', 'teamlead']), 
+    projectController.createProjectTask
+);
+
+router.put('/:id/tasks/:taskId', 
+    authenticate, 
+    authorize(['admin', 'superadmin', 'manager', 'teamlead']), 
+    projectController.updateProjectTask
+);
+
+router.delete('/:id/tasks/:taskId', 
+    authenticate, 
+    authorize(['admin', 'superadmin', 'manager', 'teamlead']), 
+    projectController.deleteProjectTask
+);
+
+// Project Team
+router.get('/:id/team', 
+    authenticate, 
+    projectController.getProjectMembers
+);
+
+router.post('/:id/team', 
+    authenticate, 
+    authorize(['admin', 'superadmin', 'manager']), 
+    projectController.addProjectMembers
+);
+
+router.delete('/:id/team/:memberId', 
+    authenticate, 
+    authorize(['admin', 'superadmin', 'manager']), 
+    projectController.removeProjectMember
+);
+
+router.put('/:id/team/:memberId', 
+    authenticate, 
+    authorize(['admin', 'superadmin', 'manager']), 
+    projectController.updateMemberRole
+);
+
+// Project Timeline
+router.get('/:id/timeline', 
+    authenticate, 
+    projectController.getProjectTimeline
+);
+
+router.post('/:id/timeline', 
+    authenticate, 
+    authorize(['admin', 'superadmin', 'manager', 'teamlead']), 
+    projectController.addTimelineEvent
+);
+
+router.put('/:id/timeline/:eventId', 
+    authenticate, 
+    authorize(['admin', 'superadmin', 'manager', 'teamlead']), 
+    projectController.updateTimelineEvent
+);
+
+router.delete('/:id/timeline/:eventId', 
+    authenticate, 
+    authorize(['admin', 'superadmin', 'manager', 'teamlead']), 
+    projectController.deleteTimelineEvent
 );
 
 module.exports = router;

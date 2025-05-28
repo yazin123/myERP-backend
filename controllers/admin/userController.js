@@ -84,7 +84,7 @@ const userController = {
     // Get all users with search and filters
     getAllUsers: async (req, res) => {
         try {
-            console.log("getAllUsers", req.query);
+       
             const {
                 page = 1,
                 limit = 10,
@@ -96,7 +96,7 @@ const userController = {
                 status,
                 sortBy = 'name',
                 order = 'asc',
-                includeSuperAdmin = false // New parameter to control superadmin visibility
+                includeSuperAdmin = true
             } = req.query;
 
             const query = {};
@@ -116,21 +116,35 @@ const userController = {
                 ];
             }
 
-            // Filters
-            if (department) query.department = department;
-            if (designation) query.designation = designation;
+            // Filters - only add if not 'all' and not empty
+            if (department && department !== 'all') query.department = department;
+            if (designation && designation !== 'all') query.designation = designation;
             if (role && role !== 'all') query.role = role;
-            if (position) query.position = position;
-            if (status) query.status = status;
+            if (position && position !== 'all') query.position = position;
+            if (status && status !== 'all') query.status = status;
+
+            // Validate sortBy field to prevent injection
+            const allowedSortFields = ['name', 'email', 'department', 'designation', 'position', 'joiningDate', 'createdAt'];
+            const validSortBy = allowedSortFields.includes(sortBy) ? sortBy : 'name';
+
+            // Validate order
+            const validOrder = order === 'desc' ? -1 : 1;
 
             // Sorting
             const sortOption = {};
-            sortOption[sortBy] = order === 'desc' ? -1 : 1;
+            sortOption[validSortBy] = validOrder;
+
+            // Validate page and limit
+            const validPage = Math.max(1, parseInt(page));
+            const validLimit = Math.min(100, Math.max(1, parseInt(limit))); // Cap at 100 items per page
+
+            console.log("Query:", query);
+            console.log("Sort:", sortOption);
 
             const users = await User.find(query)
                 .sort(sortOption)
-                .limit(limit * 1)
-                .skip((page - 1) * limit)
+                .limit(validLimit)
+                .skip((validPage - 1) * validLimit)
                 .select('-password')
                 .populate('reportingTo', 'name email employeeId')
                 .populate('projects', 'name status')
@@ -140,12 +154,17 @@ const userController = {
 
             res.json({
                 users,
-                totalPages: Math.ceil(total / limit),
-                currentPage: page,
+                totalPages: Math.ceil(total / validLimit),
+                currentPage: validPage,
                 total
             });
         } catch (error) {
-            res.status(500).json({ message: error.message });
+            console.error('Error in getAllUsers:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to fetch users',
+                error: error.message
+            });
         }
     },
 
@@ -215,9 +234,10 @@ const userController = {
     // Update addUser to handle FormData and role restrictions
     addUser: async (req, res) => {
         try {
+            console.log("addUser - Request Body:", req.body);
+            console.log("addUser - Files:", req.files);
+            // Extract all fields from request body
             const {
-                userId,
-                password,
                 name,
                 email,
                 phone,
@@ -229,8 +249,22 @@ const userController = {
                 bankDetails,
                 skills,
                 reportingTo,
-                allowedWifiNetworks
+                allowedWifiNetworks,
+                dateOfJoining,
+                type,
+                status
             } = req.body;
+
+            // Validate required fields
+            const requiredFields = ['name', 'email', 'phone', 'department', 'position', 'designation'];
+            const missingFields = requiredFields.filter(field => !req.body[field]);
+            
+            if (missingFields.length > 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Missing required fields: ${missingFields.join(', ')}`
+                });
+            }
     
             // Role restriction checks
             if (req.user.role === 'admin' && role === 'superadmin') {
@@ -240,24 +274,6 @@ const userController = {
                 }
                 return res.status(403).json({
                     message: 'Admin cannot create superadmin users'
-                });
-            }
-    
-            // Check for existing user
-            const existingUser = await User.findOne({ 
-                $or: [
-                    { userId }, 
-                    { email }
-                ] 
-            });
-
-            if (existingUser) {
-                if (req.files) {
-                    if (req.files.photo) removeFile(req.files.photo[0].path);
-                    if (req.files.resume) removeFile(req.files.resume[0].path);
-                }
-                return res.status(400).json({ 
-                    message: 'User ID or email already exists' 
                 });
             }
 
@@ -275,17 +291,45 @@ const userController = {
                         fileUrl: req.files.resume[0].path,
                         uploadDate: new Date()
                     };
-            }
+                }
             }
 
             // Parse JSON strings from FormData
-            const parsedSkills = skills ? JSON.parse(skills) : [];
-            const parsedWifiNetworks = allowedWifiNetworks ? JSON.parse(allowedWifiNetworks) : [];
-            const parsedSalary = salary ? Number(salary) : 0;
+            let parsedSkills = [];
+            let parsedWifiNetworks = [];
+            let parsedSalary;
+            let parsedBankDetails;
 
-            const user = new User({
-                userId,
-                password,
+            try {
+                parsedSkills = skills ? JSON.parse(skills) : [];
+            } catch (e) {
+                console.error('Error parsing skills:', e);
+                parsedSkills = [];
+            }
+
+            try {
+                parsedWifiNetworks = allowedWifiNetworks ? JSON.parse(allowedWifiNetworks) : [];
+            } catch (e) {
+                console.error('Error parsing allowedWifiNetworks:', e);
+                parsedWifiNetworks = [];
+            }
+
+            try {
+                parsedSalary = salary ? Number(salary) : undefined;
+            } catch (e) {
+                console.error('Error parsing salary:', e);
+                parsedSalary = undefined;
+            }
+
+            try {
+                parsedBankDetails = bankDetails ? JSON.parse(bankDetails) : undefined;
+            } catch (e) {
+                console.error('Error parsing bankDetails:', e);
+                parsedBankDetails = undefined;
+            }
+
+            // Create user object with all fields
+            const userData = {
                 name,
                 email,
                 phone,
@@ -294,21 +338,28 @@ const userController = {
                 role: role || 'employee',
                 designation,
                 salary: parsedSalary,
-                bankDetails,
-                dateOfJoining: new Date(),
+                bankDetails: parsedBankDetails,
+                dateOfJoining: dateOfJoining ? new Date(dateOfJoining) : new Date(),
                 skills: parsedSkills,
                 photo,
                 resume,
                 reportingTo,
                 allowedWifiNetworks: parsedWifiNetworks,
-                createdBy: req.user._id
-            });
-    
+                status: status || 'active',
+                type
+            };
+
+            // Create and save new user
+            const user = new User(userData);
             await user.save();
 
+            // Return success response
             res.status(201).json({
                 success: true,
-                data: user
+                data: {
+                    ...user.toObject(),
+                    employeeId: user.employeeId // Include the generated employeeId
+                }
             });
         } catch (error) {
             // Clean up uploaded files if user creation fails
@@ -316,7 +367,32 @@ const userController = {
                 if (req.files.photo) removeFile(req.files.photo[0].path);
                 if (req.files.resume) removeFile(req.files.resume[0].path);
             }
-            res.status(500).json({ message: error.message });
+
+            // Handle validation errors
+            if (error.name === 'ValidationError') {
+                return res.status(400).json({ 
+                    success: false,
+                    message: 'Validation error',
+                    validationErrors: error.errors
+                });
+            }
+
+            // Handle duplicate key errors
+            if (error.code === 11000) {
+                const field = Object.keys(error.keyPattern)[0];
+                return res.status(400).json({
+                    success: false,
+                    message: `${field} already exists`
+                });
+            }
+
+            // Handle other errors
+            console.error('Error creating user:', error);
+            res.status(500).json({ 
+                success: false,
+                message: 'Error creating user',
+                error: error.message
+            });
         }
     },
     

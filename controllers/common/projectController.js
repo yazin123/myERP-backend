@@ -37,7 +37,7 @@ const projectController = {
             sortOption[sortBy] = order === 'desc' ? -1 : 1;
 
             const projects = await Project.find(query)
-                .populate('manager', 'name photo')
+                .populate('projectHead', 'name photo')
                 .populate('members', 'name photo')
                 .populate('createdBy', 'name')
                 .sort(sortOption)

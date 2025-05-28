@@ -14,7 +14,7 @@ const hpp = require('hpp');
 const { apiLimiter } = require('./middleware/auth');
 const logger = require('./utils/logger');
 const { errorHandler, notFound } = require('./middleware/errorHandler');
-const notificationService = require('./utils/notification');
+const { notificationService } = require('./utils/notification');
 const monitoring = require('./utils/monitoring');
 const emailService = require('./utils/emailService');
 
@@ -35,6 +35,7 @@ const commonProjectRoutes = require('./routes/common/projectRoutes');
 const commonNotificationRoutes = require('./routes/common/notificationRoutes');
 const commonSystemRoutes = require('./routes/common/systemRoutes');
 const commonDashboardRoutes = require('./routes/common/dashboardRoutes');
+const dailyReportRoutes = require('./routes/common/dailyReportRoutes');
 
 require('dotenv').config();
 
@@ -109,6 +110,7 @@ app.use('/api/projects', commonProjectRoutes);
 app.use('/api/notifications', commonNotificationRoutes);
 app.use('/api/system', commonSystemRoutes);
 app.use('/api/dashboard', commonDashboardRoutes);
+app.use('/api/daily-reports', dailyReportRoutes);
 
 // Admin routes (protected by admin middleware)
 app.use('/api/admin/users', adminUserRoutes);
@@ -172,9 +174,9 @@ process.on('uncaughtException', (error) => {
 });
 
 // Handle unhandled promise rejections
-process.on('unhandledRejection', (error) => {
-    logger.error('Unhandled Rejection:', error);
-    monitoring.incrementError('unhandled_rejection');
+process.on('unhandledRejection', (err) => {
+    logger.error('UNHANDLED REJECTION! 💥 Shutting down...');
+    logger.error(err.name, err.message);
     process.exit(1);
 });
 
@@ -194,7 +196,7 @@ const server = app.listen(PORT, () => {
     logger.info(`Server running on port ${PORT} in ${process.env.NODE_ENV} mode`);
 });
 
-// Initialize WebSocket server
+// Initialize WebSocket server for notifications
 notificationService.initialize(server);
 
 module.exports = app;

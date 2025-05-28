@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const logger = require('./logger');
 const User = require('../models/User');
 const { AppError } = require('../middleware/errorHandler');
+const Notification = require('../models/Notification');
 
 class NotificationService {
     constructor() {
@@ -173,4 +174,38 @@ class NotificationService {
 // Create singleton instance
 const notificationService = new NotificationService();
 
-module.exports = notificationService; 
+// Create a notification in database
+const createNotification = async ({ userId, type, message, reference }) => {
+    try {
+        const notification = new Notification({
+            recipient: userId,
+            type,
+            title: type.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
+            content: message,
+            reference: {
+                model: reference.type.charAt(0).toUpperCase() + reference.type.slice(1),
+                id: reference.id
+            }
+        });
+
+        await notification.save();
+
+        // Also send real-time notification
+        await notificationService.sendToUser(userId, {
+            type,
+            message,
+            reference
+        });
+
+        return notification;
+    } catch (error) {
+        logger.error('Error creating notification:', error);
+        return null;
+    }
+};
+
+module.exports = {
+    NotificationService,
+    notificationService,
+    createNotification
+}; 

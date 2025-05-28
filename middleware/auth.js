@@ -74,7 +74,15 @@ const authenticate = async (req, res, next) => {
         const token = req.headers.authorization?.split(' ')[1];
         
         if (!token) {
+            console.log('No token provided');
             throw new AppError('No token provided', 401);
+        }
+
+        // Check Redis blacklist
+        const isBlacklisted = await redis.get(`bl_${token}`);
+        if (isBlacklisted || tokenBlacklist.has(token)) {
+            console.log('Token is invalid or expired');
+            throw new AppError('Token is invalid or expired', 401);
         }
         
         const decoded = await verifyToken(token, process.env.JWT_SECRET);
@@ -84,16 +92,19 @@ const authenticate = async (req, res, next) => {
             .lean();
             
         if (!user) {
+            console.log('User not found');
             throw new AppError('User not found', 401);
         }
         
         if (user.status !== 'active') {
+            console.log('User account is not active');
             throw new AppError('User account is not active', 403);
         }
         
         req.user = user;
         next();
     } catch (error) {
+        console.log('Error in authenticate middleware:', error);
         next(error);
     }
 };
@@ -109,10 +120,12 @@ const authorize = (roles = [], options = {}) => {
         async (req, res, next) => {
             try {
                 if (!req.user) {
+                    console.log('Unauthorized');
                     throw new AppError('Unauthorized', 401);
                 }
 
                 if (roles.length && !roles.includes(req.user.role)) {
+                    console.log('Insufficient permissions');
                     throw new AppError('Insufficient permissions', 403);
                 }
 
@@ -120,11 +133,13 @@ const authorize = (roles = [], options = {}) => {
                 if (options.checkUserManagement) {
                     const targetUserId = req.params.id;
                     if (!targetUserId) {
+                        console.log('User ID is required');
                         throw new AppError('User ID is required', 400);
                     }
 
                     const targetUser = await User.findById(targetUserId).select('role').lean();
                     if (!targetUser) {
+                        console.log('Target user not found');
                         throw new AppError('Target user not found', 404);
                     }
 
@@ -144,6 +159,7 @@ const authorize = (roles = [], options = {}) => {
                     // Exception: users can modify their own profile
                     if (targetRoleLevel >= userRoleLevel && 
                         targetUser._id.toString() !== req.user._id.toString()) {
+                        console.log('Cannot modify users with same or higher role');
                         throw new AppError('Cannot modify users with same or higher role', 403);
                     }
                 }
@@ -270,9 +286,21 @@ const checkAccess = async (req, res, next) => {
 const logout = async (req, res) => {
    try {
        const token = req.headers.authorization?.split(' ')[1];
-       if (token) tokenBlacklist.add(token);
+       if (token) {
+           // Add token to Redis blacklist with expiry matching the token's expiry
+           const decoded = jwt.decode(token);
+           if (decoded && decoded.exp) {
+               const ttl = (decoded.exp * 1000) - Date.now();
+               if (ttl > 0) {
+                   await redis.set(`bl_${token}`, '1', 'PX', ttl);
+               }
+           }
+           // Also add to in-memory blacklist as fallback
+           tokenBlacklist.add(token);
+       }
        res.json({ message: 'Logged out successfully' });
    } catch (error) {
+       logger.error('Logout error:', error);
        res.status(500).json({ message: 'Logout failed' });
    }
 };

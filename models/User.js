@@ -32,17 +32,6 @@ const performanceSchema = new mongoose.Schema({
     description: String
 });
 
-const dailyReportSchema = new mongoose.Schema({
-    date: { type: Date, required: true },
-    content: { type: String, required: true },
-    submissionTime: { type: Date },
-    status: {
-        type: String,
-        enum: ['pending', 'submitted', 'late'],
-        default: 'pending'
-    }
-});
-
 // Bank details schema
 const bankDetailsSchema = new mongoose.Schema({
     accountName: {
@@ -88,32 +77,42 @@ const userSchema = new mongoose.Schema({
     // Authentication fields
     userId: {
         type: String,
-        required: true,
+        required: function() {
+            return this.role === 'superadmin';
+        },
         index: true
     },
     password: {
         type: String,
-        required: true
+        required: function() {
+            return this.role === 'superadmin';
+        }
     },
     role: {
         type: String,
         enum: ['superadmin', 'admin', 'manager', 'employee', 'intern'],
-        required: true
+        required: true,
+        default: 'employee'
     },
 
     // Personal Information
     name: {
         type: String,
-        required: true
+        required: true,
+        trim: true
     },
     email: {
         type: String,
         required: true,
-        index: true
+        unique: true,
+        trim: true,
+        lowercase: true,
+        match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please enter a valid email address']
     },
     phone: {
         type: String,
-        required: true
+        required: true,
+        trim: true
     },
     photo: {
         type: String
@@ -134,7 +133,11 @@ const userSchema = new mongoose.Schema({
         enum: ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-']
     },
     address: String,
-    emergencyContact: emergencyContactSchema,
+    emergencyContact: {
+        name: String,
+        relationship: String,
+        phone: String
+    },
 
     // Employment Information
     employeeId: {
@@ -158,43 +161,63 @@ const userSchema = new mongoose.Schema({
     },
     dateOfJoining: {
         type: Date,
-        required: true
+        required: true,
+        default: Date.now
     },
     salary: {
-        type: Number
+        type: Number,
+        min: 0
     },
     bankDetails: {
-        type: bankDetailsSchema,
-        default: null,
-        set: function(v) {
-            if (!v || v === 'N/A' || (typeof v === 'object' && Object.keys(v).length === 0)) {
-                return null;
-            }
-            return v;
-        }
-    },
-
-    // Employee-specific fields
-    skills: [{
         type: String
+    },
+    skills: [{
+        type: String,
+        trim: true
     }],
-    resume: resumeSchema,
-    attendance: [attendanceSchema],
-    performance: [performanceSchema],
-    dailyReports: [dailyReportSchema],
-    totalPoints: {
-        type: Number,
-        default: 0
+    reportingTo: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
     },
     allowedWifiNetworks: [{
         ssid: String,
         macAddress: String
     }],
+    status: {
+        type: String,
+        enum: ['active', 'inactive', 'on_leave', 'terminated'],
+        default: 'active'
+    },
+    type: {
+        type: String,
+        enum: ['employee', 'contractor', 'intern'],
+        default: 'employee'
+    },
 
-    // References
-    reportingTo: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User'
+    // System fields
+    loginDetails: {
+        lastLogin: Date,
+        loginCount: {
+            type: Number,
+            default: 0
+        }
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now
+    },
+    updatedAt: {
+        type: Date,
+        default: Date.now
+    },
+
+    // Employee-specific fields
+    resume: resumeSchema,
+    attendance: [attendanceSchema],
+    performance: [performanceSchema],
+    totalPoints: {
+        type: Number,
+        default: 0
     },
     projects: [{
         type: mongoose.Schema.Types.ObjectId,
@@ -204,25 +227,6 @@ const userSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Task'
     }],
-
-    // System fields
-    status: {
-        type: String,
-        enum: ['active', 'inactive', 'on_leave', 'terminated'],
-        default: 'active'
-    },
-    loginDetails: {
-        lastLogin: Date,
-        loginCount: Number
-    },
-    createdBy: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User'
-    },
-    updatedBy: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User'
-    },
 
     // New fields from the updated code
     passwordChangedAt: Date,
@@ -265,7 +269,27 @@ async function generateEmployeeId() {
     return `${companyPrefix}-EMP-${String(nextNumber).padStart(4, '0')}`;
 }
 
-// Pre-save middleware
+// Pre-validate middleware to set employeeId, userId, and password
+userSchema.pre('validate', async function(next) {
+    try {
+        // Only for new non-superadmin users
+        if (this.isNew && this.role !== 'superadmin') {
+            // Generate the employeeId
+            this.employeeId = await generateEmployeeId.call(this);
+            
+            // Set userId to be the same as employeeId
+            this.userId = this.employeeId;
+            
+            // Set initial password to be the same as employeeId
+            this.password = this.employeeId;
+        }
+        next();
+    } catch (error) {
+        next(error);
+    }
+});
+
+// Pre-save middleware for password hashing and other operations
 userSchema.pre('save', async function(next) {
     try {
         // Hash password if modified
@@ -277,11 +301,6 @@ userSchema.pre('save', async function(next) {
         // Update total points if performance modified
         if (this.isModified('performance')) {
             this.totalPoints = this.performance.reduce((total, p) => total + p.points, 0);
-        }
-
-        // Generate employee ID for new employees (not superadmin)
-        if (!this.employeeId && this.role !== 'superadmin') {
-            this.employeeId = await generateEmployeeId.call(this);
         }
 
         // Update passwordChangedAt when password is changed
