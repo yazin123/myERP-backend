@@ -2,6 +2,9 @@
 const Performance = require('../../models/Performance');
 const Task = require('../../models/Task');
 const moment = require('moment');
+const Project = require('../../models/Project');
+const User = require('../../models/User');
+const { createNotification } = require('../../utils/notification');
 
 const taskController = {
   // Get all tasks
@@ -131,45 +134,78 @@ const taskController = {
 
   updateTaskStatus: async (req, res) => {
     try {
-      const currentTime = moment();
-      const cutoffTime = moment().set({ hour: 18, minute: 0 });
+      const { taskId } = req.params;
+      const { status, comment } = req.body;
+      const userId = req.user._id;
 
-      const task = await Task.findById(req.params.id);
-      if (!task) {
-        return res.status(404).json({ message: 'Task not found' });
-      }
+      // Find the project containing the task
+      const project = await Project.findOne({
+        'tasks._id': taskId
+      });
 
-      if (currentTime.isAfter(cutoffTime) && task.deadline) {
-        return res.status(400).json({
-          message: 'Cannot update status after 6:00 PM for tasks with deadline'
+      if (!project) {
+        return res.status(404).json({
+          success: false,
+          message: 'Task not found'
         });
       }
 
-      const oldStatus = task.status;
-      task.status = req.body.status;
-      task.updatedBy = req.user.userId;
+      // Find the specific task
+      const task = project.tasks.id(taskId);
 
-      if (req.body.status === 'Completed' && oldStatus !== 'Completed') {
-        task.completedDateTime = new Date();
+      // Check if user has access to update this task
+      if (task.assignedTo.toString() !== userId.toString() &&
+        project.projectHead.toString() !== userId.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: 'You do not have permission to update this task'
+        });
       }
 
-      await task.save();
-
-      // If task is completed, create a performance record
-      if (req.body.status === 'Completed') {
-        await new Performance({
-          category: 'task_completed',
-          points: 1,
-          remark: `Task "${task.description}" completed`,
-          user_id: task.assignedTo,
-          createdBy: req.user.userId,
-          taskId: task._id
-        }).save();
+      // Update task status
+      task.status = status;
+      if (comment) {
+        task.comments.push({
+          content: comment,
+          createdBy: userId,
+          createdAt: new Date()
+        });
       }
 
-      res.json(task);
+      // Add status change to history
+      task.history.push({
+        status,
+        updatedBy: userId,
+        updatedAt: new Date(),
+        comment
+      });
+
+      await project.save();
+
+      // Send notification to project head if task status changes
+      if (project.projectHead.toString() !== userId.toString()) {
+        await createNotification({
+          userId: project.projectHead,
+          type: 'task_update',
+          message: `Task "${task.title}" status updated to ${status}`,
+          reference: {
+            type: 'Task',
+            id: task._id
+          }
+        });
+      }
+
+      res.json({
+        success: true,
+        data: task
+      });
     } catch (error) {
-      res.status(400).json({ message: error.message });
+      console.error('Error in updateTaskStatus:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update task status',
+        error: error.message
+      });
     }
   },
 
@@ -277,6 +313,110 @@ const taskController = {
       });
     } catch (error) {
       res.status(500).json({ message: error.message });
+    }
+  },
+
+  async getMyTasks(req, res) {
+    try {
+      const userId = req.user._id;
+      
+      // Find all projects where user is a member or project head
+      const projects = await Project.find({
+        $or: [
+          { projectHead: userId },
+          { members: userId }
+        ]
+      }).populate('projectHead', 'name photo')
+        .populate('members', 'name photo');
+
+      // Extract and format tasks from all projects
+      let allTasks = [];
+      projects.forEach(project => {
+        const projectTasks = project.tasks || [];
+        projectTasks.forEach(task => {
+          if (task.assignedTo.toString() === userId.toString()) {
+            allTasks.push({
+              ...task.toObject(),
+              projectId: project._id,
+              projectName: project.name,
+              projectHead: project.projectHead
+            });
+          }
+        });
+      });
+
+      // Sort tasks by priority and due date
+      allTasks.sort((a, b) => {
+        if (a.priority !== b.priority) {
+          const priorityOrder = { high: 1, medium: 2, low: 3 };
+          return priorityOrder[a.priority] - priorityOrder[b.priority];
+        }
+        return new Date(a.dueDate) - new Date(b.dueDate);
+      });
+
+      res.json({
+        success: true,
+        data: allTasks
+      });
+    } catch (error) {
+      console.error('Error in getMyTasks:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch tasks',
+        error: error.message
+      });
+    }
+  },
+
+  async getTaskById(req, res) {
+    try {
+      const { taskId } = req.params;
+      const userId = req.user._id;
+
+      // Find the project containing the task
+      const project = await Project.findOne({
+        'tasks._id': taskId
+      }).populate('projectHead', 'name photo')
+        .populate('members', 'name photo');
+
+      if (!project) {
+        return res.status(404).json({
+          success: false,
+          message: 'Task not found'
+        });
+      }
+
+      // Find the specific task
+      const task = project.tasks.id(taskId);
+
+      // Check if user has access to this task
+      const hasAccess = task.assignedTo.toString() === userId.toString() ||
+                      project.projectHead._id.toString() === userId.toString() ||
+                      project.members.some(member => member._id.toString() === userId.toString());
+
+      if (!hasAccess) {
+        return res.status(403).json({
+          success: false,
+          message: 'You do not have access to this task'
+        });
+      }
+
+      res.json({
+        success: true,
+        data: {
+          ...task.toObject(),
+          projectId: project._id,
+          projectName: project.name,
+          projectHead: project.projectHead
+        }
+      });
+    } catch (error) {
+      console.error('Error in getTaskById:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch task',
+        error: error.message
+      });
     }
   },
 

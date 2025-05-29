@@ -144,8 +144,8 @@ const projectSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['planning', 'active', 'on-hold', 'completed', 'cancelled'],
-        default: 'planning'
+        enum: ['created', 'active', 'on-progress', 'stopped', 'completed', 'cancelled'],
+        default: 'created'
     },
     priority: {
         type: String,
@@ -218,25 +218,58 @@ projectSchema.pre('save', function(next) {
             this.history.push({
                 status: this.status,
                 datetime: new Date(),
-                updatedBy: this.updatedBy || this.createdBy, // Use updatedBy if available, fallback to createdBy
+                updatedBy: this.updatedBy || this.createdBy,
                 description: `Project status changed to ${this.status}`
             });
         }
     }
 
+    // Auto-update project status based on pipeline stages
+    if (this.isModified('pipeline')) {
+        // Check if any pipeline stage is in progress
+        const hasInProgressStage = ['requirementGathering', 'architectCreation', 'architectSubmission'].some(
+            stage => this.pipeline[stage]?.status === 'in-progress'
+        ) || this.pipeline.developmentPhases?.some(phase => phase.status === 'in-progress');
+
+        // Check if all pipeline stages are completed
+        const allStagesCompleted = ['requirementGathering', 'architectCreation', 'architectSubmission'].every(
+            stage => this.pipeline[stage]?.status === 'completed'
+        ) && (this.pipeline.developmentPhases.length === 0 || 
+              this.pipeline.developmentPhases.every(phase => phase.status === 'completed'));
+
+        // Check if any phase has started (is either in-progress or completed)
+        const hasStartedPhase = ['requirementGathering', 'architectCreation', 'architectSubmission'].some(
+            stage => ['in-progress', 'completed'].includes(this.pipeline[stage]?.status)
+        ) || this.pipeline.developmentPhases?.some(phase => ['in-progress', 'completed'].includes(phase.status));
+
+        // Only update status if not manually set to stopped or cancelled
+        if (!['stopped', 'cancelled'].includes(this.status)) {
+            if (allStagesCompleted) {
+                this.status = 'completed';
+                this.completedAt = new Date();
+            } else if (hasInProgressStage) {
+                this.status = 'on-progress';
+            } else if (hasStartedPhase && this.status === 'created') {
+                this.status = 'active';
+            }
+        }
+    }
+
     // Calculate progress based on pipeline stages
     let completedStages = 0;
-    let totalStages = 3; // Fixed stages
+    let totalStages = 3;
     
     ['requirementGathering', 'architectCreation', 'architectSubmission'].forEach(stage => {
-        if (this.pipeline[stage].status === 'completed') completedStages++;
+        if (this.pipeline[stage]?.status === 'completed') completedStages++;
     });
     
     // Add development phases to total
-    totalStages += this.pipeline.developmentPhases.length;
-    completedStages += this.pipeline.developmentPhases.filter(phase => 
-        phase.status === 'completed'
-    ).length;
+    if (this.pipeline?.developmentPhases?.length) {
+        totalStages += this.pipeline.developmentPhases.length;
+        completedStages += this.pipeline.developmentPhases.filter(phase => 
+            phase.status === 'completed'
+        ).length;
+    }
 
     this.progress = Math.round((completedStages / totalStages) * 100);
     

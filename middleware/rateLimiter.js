@@ -1,61 +1,66 @@
-const rateLimit = require('express-rate-limit');
+const { rateLimit } = require('express-rate-limit');
 const RedisStore = require('rate-limit-redis');
 const Redis = require('ioredis');
-const { AppError } = require('./errorHandler');
+const logger = require('../utils/logger');
 
 // Create Redis client
-const redisClient = new Redis({
-    host: process.env.REDIS_HOST || 'localhost',
-    port: process.env.REDIS_PORT || 6379,
-    password: process.env.REDIS_PASSWORD,
-    enableOfflineQueue: false
+const redisClient = new Redis(process.env.REDIS_URL);
+
+// Handle Redis errors
+redisClient.on('error', (err) => {
+    logger.error('Redis error:', err);
 });
 
-// General API rate limiter
-const apiLimiter = rateLimit({
+// Base rate limiter configuration
+const createRateLimiter = (options) => rateLimit({
     store: new RedisStore({
         client: redisClient,
-        prefix: 'rl:api:'
+        prefix: 'rl:', // Redis key prefix for rate limiter
+        ...options.redis
     }),
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // Limit each IP to 100 requests per windowMs
-    message: 'Too many requests from this IP, please try again later.',
-    handler: (req, res) => {
-        throw new AppError(429, 'Too many requests from this IP, please try again later.');
-    }
+    windowMs: options.windowMs || 60 * 60 * 1000, // default 1 hour
+    max: options.max || 100, // default 100 requests per windowMs
+    message: options.message || 'Too many requests from this IP, please try again later.',
+    standardHeaders: true,
+    legacyHeaders: false
 });
 
-// Authentication rate limiter (more strict)
-const authLimiter = rateLimit({
-    store: new RedisStore({
-        client: redisClient,
-        prefix: 'rl:auth:'
+// Different rate limiters for different routes
+const rateLimiters = {
+    // Authentication routes (login, register, etc.)
+    auth: createRateLimiter({
+        windowMs: 15 * 60 * 1000, // 15 minutes
+        max: 5, // 5 requests per 15 minutes
+        message: 'Too many authentication attempts, please try again after 15 minutes.'
     }),
-    windowMs: 60 * 60 * 1000, // 1 hour
-    max: 5, // Limit each IP to 5 requests per windowMs
-    message: 'Too many login attempts from this IP, please try again after an hour.',
-    handler: (req, res) => {
-        throw new AppError(429, 'Too many login attempts from this IP, please try again after an hour.');
-    }
-});
 
-// File upload rate limiter
-const uploadLimiter = rateLimit({
-    store: new RedisStore({
-        client: redisClient,
-        prefix: 'rl:upload:'
+    // API routes
+    api: createRateLimiter({
+        windowMs: 60 * 60 * 1000, // 1 hour
+        max: 1000 // 1000 requests per hour
     }),
-    windowMs: 60 * 60 * 1000, // 1 hour
-    max: 50, // Limit each IP to 50 uploads per windowMs
-    message: 'Too many file uploads from this IP, please try again later.',
-    handler: (req, res) => {
-        throw new AppError(429, 'Too many file uploads from this IP, please try again later.');
-    }
-});
+
+    // Admin routes
+    admin: createRateLimiter({
+        windowMs: 60 * 60 * 1000, // 1 hour
+        max: 500 // 500 requests per hour
+    }),
+
+    // Public routes
+    public: createRateLimiter({
+        windowMs: 15 * 60 * 1000, // 15 minutes
+        max: 100 // 100 requests per 15 minutes
+    })
+};
+
+// Middleware to apply rate limiting based on user role
+const dynamicRateLimit = (req, res, next) => {
+    const userRole = req.user?.role || 'public';
+    const limiter = rateLimiters[userRole] || rateLimiters.public;
+    return limiter(req, res, next);
+};
 
 module.exports = {
-    apiLimiter,
-    authLimiter,
-    uploadLimiter,
-    redisClient
+    rateLimiters,
+    dynamicRateLimit
 }; 

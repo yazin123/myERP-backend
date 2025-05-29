@@ -21,7 +21,7 @@ const storage = multer.diskStorage({
     }
 });
 
-const upload = multer({
+const uploadMulter = multer({
     storage: storage,
     limits: {
         fileSize: 5 * 1024 * 1024 // 5MB limit
@@ -37,11 +37,12 @@ const upload = multer({
 // Authentication routes
 router.post('/login', userController.login);
 router.post('/logout', authenticate, userController.logout);
-router.post('/change-password', authenticate, userController.changePassword);
 
 // Profile routes
 router.get('/current', authenticate, userController.getCurrentUser);
-router.put('/profile', authenticate, upload.single('photo'), userController.updateProfile);
 router.get('/profile/photo/:filename', userController.getProfilePhoto);
+router.put('/profile', authenticate, userController.updateProfile);
+router.put('/profile/password', authenticate, userController.changePassword);
+router.put('/profile/photo', authenticate, uploadMulter.single('photo'), userController.updatePhoto);
 
 module.exports = router; 

@@ -35,15 +35,10 @@ const checkPipelinePhaseAccess = async (userId, projectId) => {
 };
 
 const updateProjectStatusBasedOnPipeline = (project) => {
-    // If any phase is in-progress, project should be active
+    // Check if any phase is in progress
     const hasInProgressPhase = ['requirementGathering', 'architectCreation', 'architectSubmission'].some(
         stage => project.pipeline[stage]?.status === 'in-progress'
     ) || project.pipeline.developmentPhases?.some(phase => phase.status === 'in-progress');
-
-    if (hasInProgressPhase) {
-        project.status = 'active';
-        return;
-    }
 
     // Check if all phases are completed
     const allPhasesCompleted = ['requirementGathering', 'architectCreation', 'architectSubmission'].every(
@@ -51,14 +46,21 @@ const updateProjectStatusBasedOnPipeline = (project) => {
     ) && (!project.pipeline.developmentPhases?.length || 
           project.pipeline.developmentPhases.every(phase => phase.status === 'completed'));
 
-    if (allPhasesCompleted) {
-        project.status = 'completed';
-        project.completedAt = new Date();
-        return;
-    }
+    // Check if any phase has started (is either in-progress or completed)
+    const hasStartedPhase = ['requirementGathering', 'architectCreation', 'architectSubmission'].some(
+        stage => ['in-progress', 'completed'].includes(project.pipeline[stage]?.status)
+    ) || project.pipeline.developmentPhases?.some(phase => ['in-progress', 'completed'].includes(phase.status));
 
-    // If no phases are in progress and not all are completed, project is pending
-    project.status = 'pending';
+    // Only update status if not manually set to stopped or cancelled
+    if (!['stopped', 'cancelled'].includes(project.status)) {
+        if (allPhasesCompleted) {
+            project.status = 'completed';
+        } else if (hasInProgressPhase) {
+            project.status = 'on-progress';
+        } else if (hasStartedPhase && project.status === 'created') {
+            project.status = 'active';
+        }
+    }
 };
 
 const validatePipelinePhaseTransition = (project, stage, newStatus) => {
@@ -105,7 +107,7 @@ const projectController = {
                 startDate: new Date(parseFormField(req.body.startDate)),
                 endDate: new Date(parseFormField(req.body.endDate)),
                 priority: req.body.priority || 'medium',
-                status: 'pending',
+                status: 'created',
                 createdBy: req.user._id,
                 pipeline: {
                     requirementGathering: {
@@ -420,8 +422,8 @@ const projectController = {
                     runValidators: true 
                 }
             )
-            .populate('projectHead', 'name email photo')
-            .populate('members', 'name email photo')
+            .populate('projectHead', 'name email')
+            .populate('members', 'name email')
             .populate('createdBy', 'name email')
             .populate('updatedBy', 'name email');
 
@@ -647,12 +649,20 @@ const projectController = {
             const { id } = req.params;
             const { stage, status } = req.body;
 
-            // Check access rights
-            const hasAccess = await checkPipelinePhaseAccess(req.user._id, id);
-            if (!hasAccess) {
-                return res.status(403).json({
+            // Validate required fields
+            if (!stage || !status) {
+                return res.status(400).json({
                     success: false,
-                    message: 'You do not have permission to update the pipeline'
+                    message: 'Stage and status are required'
+                });
+            }
+
+            // Validate status value
+            const validStatuses = ['pending', 'in-progress', 'completed'];
+            if (!validStatuses.includes(status)) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Invalid status value. Must be one of: ${validStatuses.join(', ')}`
                 });
             }
 
@@ -664,24 +674,33 @@ const projectController = {
                 });
             }
 
-            // Validate the phase transition
-            if (!validatePipelinePhaseTransition(project, stage, status)) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Invalid phase transition. Previous phase must be completed first.'
-                });
+            // Initialize pipeline if it doesn't exist
+            if (!project.pipeline) {
+                project.pipeline = {
+                    requirementGathering: { status: 'pending' },
+                    architectCreation: { status: 'pending' },
+                    architectSubmission: { status: 'pending' },
+                    developmentPhases: []
+                };
             }
 
             // Update the stage status
-            if (stage.startsWith('development')) {
-                const phaseIndex = parseInt(stage.replace('development', ''));
-                if (project.pipeline.developmentPhases[phaseIndex]) {
-                    project.pipeline.developmentPhases[phaseIndex].status = status;
-                    if (status === 'completed') {
-                        project.pipeline.developmentPhases[phaseIndex].completedAt = new Date();
-                    }
+            if (stage.startsWith('developmentPhase-')) {
+                const phaseIndex = parseInt(stage.replace('developmentPhase-', ''));
+                if (isNaN(phaseIndex) || !project.pipeline.developmentPhases[phaseIndex]) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Invalid development phase index'
+                    });
+                }
+                project.pipeline.developmentPhases[phaseIndex].status = status;
+                if (status === 'completed') {
+                    project.pipeline.developmentPhases[phaseIndex].completedAt = new Date();
                 }
             } else {
+                if (!project.pipeline[stage]) {
+                    project.pipeline[stage] = {};
+                }
                 project.pipeline[stage].status = status;
                 if (status === 'completed') {
                     project.pipeline[stage].completedAt = new Date();
@@ -694,15 +713,19 @@ const projectController = {
             await project.save();
 
             // Create notification for status change
-            await createNotification({
-                userId: project.projectHead,
-                type: 'pipeline_update',
-                message: `Project ${project.name} pipeline stage ${stage} has been updated to ${status}`,
-                reference: {
-                    type: 'project',
-                    id: project._id
-                }
-            });
+            try {
+                await createNotification({
+                    userId: project.projectHead,
+                    type: 'pipeline_update',
+                    message: `Project ${project.name} pipeline stage ${stage} has been updated to ${status}`,
+                    reference: {
+                        type: 'project',
+                        id: project._id
+                    }
+                });
+            } catch (notificationError) {
+                console.error('Failed to send pipeline update notification:', notificationError);
+            }
 
             res.json({
                 success: true,
@@ -712,7 +735,8 @@ const projectController = {
             console.error('Error updating project pipeline:', error);
             res.status(500).json({
                 success: false,
-                message: error.message || 'Internal server error'
+                message: 'Failed to update project pipeline',
+                error: error.message
             });
         }
     },
@@ -755,7 +779,7 @@ const projectController = {
             const { status, reason } = req.body;
 
             // Validate status
-            const validStatuses = ['planning', 'active', 'on-hold', 'completed', 'cancelled'];
+            const validStatuses = ['created', 'active', 'on-progress', 'stopped', 'completed', 'cancelled'];
             if (!validStatuses.includes(status)) {
                 return res.status(400).json({
                     success: false,
@@ -768,6 +792,33 @@ const projectController = {
                 return res.status(404).json({
                     success: false,
                     message: 'Project not found'
+                });
+            }
+
+            // Validate status transitions
+            const isValidTransition = (() => {
+                switch (status) {
+                    case 'active':
+                        return project.status === 'created';
+                    case 'on-progress':
+                        // This should only be set automatically by pipeline updates
+                        return false;
+                    case 'stopped':
+                    case 'cancelled':
+                        // Can be set from any status except completed
+                        return project.status !== 'completed';
+                    case 'completed':
+                        // Should only be set automatically when all pipeline stages are completed
+                        return false;
+                    default:
+                        return false;
+                }
+            })();
+
+            if (!isValidTransition) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid status transition'
                 });
             }
 
@@ -792,11 +843,6 @@ const projectController = {
             }
 
             project.history.push(historyEntry);
-
-            // If project is completed, set completion date
-            if (status === 'completed' && oldStatus !== 'completed') {
-                project.completedAt = new Date();
-            }
 
             await project.save();
 
@@ -842,7 +888,9 @@ const projectController = {
 
     // Project Tasks
     async getProjectTasks(req, res) {
+      
         try {
+            console.log("getProjectTasks", req.params.id);
             const project = await Project.findById(req.params.id)
                 .populate({
                     path: 'tasks',
@@ -858,6 +906,7 @@ const projectController = {
                     message: 'Project not found'
                 });
             }
+            console.log("project", project);
 
             res.status(200).json({
                 success: true,
@@ -1382,6 +1431,120 @@ const projectController = {
             res.status(500).json({
                 success: false,
                 message: 'Error getting project statistics',
+                error: error.message
+            });
+        }
+    },
+
+    async assignTasksToTeam(req, res) {
+        try {
+            const { id } = req.params;
+            const { tasks } = req.body;
+
+            const project = await Project.findById(id)
+                .populate('members', 'name email');
+
+            if (!project) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Project not found'
+                });
+            }
+
+            // Validate tasks array
+            if (!Array.isArray(tasks) || tasks.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Tasks array is required'
+                });
+            }
+
+            // Validate each task has required fields and assignees
+            for (const task of tasks) {
+                if (!task.description || !task.assignees || !Array.isArray(task.assignees) || task.assignees.length === 0) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Each task must have description and assignees'
+                    });
+                }
+
+                // Verify all assignees are project members
+                const invalidAssignees = task.assignees.filter(
+                    assigneeId => !project.members.some(member => member._id.toString() === assigneeId)
+                );
+
+                if (invalidAssignees.length > 0) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Some assignees are not project members'
+                    });
+                }
+            }
+
+            // Initialize tasks array if it doesn't exist
+            if (!project.tasks) {
+                project.tasks = [];
+            }
+
+            // Create tasks and assign to team members
+            const createdTasks = [];
+            for (const task of tasks) {
+                const taskPromises = task.assignees.map(async (assigneeId) => {
+                    const taskData = {
+                        description: task.description,
+                        project: project._id,
+                        createdBy: req.user._id,
+                        assignedTo: assigneeId,
+                        deadline: task.deadline || null,
+                        priority: task.priority || 'Medium',
+                        isDaily: task.isDaily || false,
+                        status: 'Assigned'
+                    };
+
+                    const newTask = new Task(taskData);
+                    await newTask.save();
+
+                    // Add task to project's tasks array
+                    project.tasks.push(newTask._id);
+
+                    // Send notification to assigned user
+                    await createNotification({
+                        userId: assigneeId,
+                        type: 'task_assignment',
+                        message: `You have been assigned a new task in project ${project.name}`,
+                        reference: {
+                            type: 'task',
+                            id: newTask._id
+                        }
+                    });
+
+                    return newTask;
+                });
+
+                const taskResults = await Promise.all(taskPromises);
+                createdTasks.push(...taskResults);
+            }
+
+            // Save project with new tasks
+            await project.save();
+
+            // Populate task details
+            const populatedTasks = await Task.find({
+                _id: { $in: createdTasks.map(task => task._id) }
+            })
+            .populate('assignedTo', 'name photo')
+            .populate('createdBy', 'name');
+
+            res.status(201).json({
+                success: true,
+                message: 'Tasks assigned successfully',
+                data: populatedTasks
+            });
+        } catch (error) {
+            console.error('Error in assignTasksToTeam:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to assign tasks',
                 error: error.message
             });
         }

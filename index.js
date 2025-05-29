@@ -36,6 +36,7 @@ const commonNotificationRoutes = require('./routes/common/notificationRoutes');
 const commonSystemRoutes = require('./routes/common/systemRoutes');
 const commonDashboardRoutes = require('./routes/common/dashboardRoutes');
 const dailyReportRoutes = require('./routes/common/dailyReportRoutes');
+const projectTaskRoutes = require('./routes/common/projectTaskRoutes');
 
 require('dotenv').config();
 
@@ -111,6 +112,7 @@ app.use('/api/notifications', commonNotificationRoutes);
 app.use('/api/system', commonSystemRoutes);
 app.use('/api/dashboard', commonDashboardRoutes);
 app.use('/api/daily-reports', dailyReportRoutes);
+app.use('/api', projectTaskRoutes);
 
 // Admin routes (protected by admin middleware)
 app.use('/api/admin/users', adminUserRoutes);

@@ -8,53 +8,30 @@ const projectController = {
     // Get user's projects
     getMyProjects: async (req, res) => {
         try {
-            const {
-                page = 1,
-                limit = 10,
-                status,
-                search,
-                sortBy = 'startDate',
-                order = 'desc'
-            } = req.query;
+            const userId = req.user._id;
 
-            const query = {
+            const projects = await Project.find({
                 $or: [
-                    { members: req.user._id },
-                    { manager: req.user._id },
-                    { createdBy: req.user._id }
+                    { projectHead: userId },
+                    { members: userId }
                 ]
-            };
-
-            if (status) query.status = status;
-            if (search) {
-                query.$or = [
-                    { name: { $regex: search, $options: 'i' } },
-                    { description: { $regex: search, $options: 'i' } }
-                ];
-            }
-
-            const sortOption = {};
-            sortOption[sortBy] = order === 'desc' ? -1 : 1;
-
-            const projects = await Project.find(query)
-                .populate('projectHead', 'name photo')
-                .populate('members', 'name photo')
-                .populate('createdBy', 'name')
-                .sort(sortOption)
-                .limit(limit * 1)
-                .skip((page - 1) * limit);
-
-            const total = await Project.countDocuments(query);
+            })
+            .populate('projectHead', 'name photo')
+            .populate('members', 'name photo')
+            .populate('timeline')
+            .sort({ startDate: 1 });
 
             res.json({
-                projects,
-                totalPages: Math.ceil(total / limit),
-                currentPage: page,
-                total
+                success: true,
+                data: projects
             });
         } catch (error) {
             logger.error('Get my projects error:', error);
-            res.status(500).json({ message: 'Failed to fetch projects' });
+            res.status(500).json({
+                success: false,
+                message: 'Failed to fetch projects',
+                error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+            });
         }
     },
 

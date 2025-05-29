@@ -325,7 +325,11 @@ const userController = {
                 parsedBankDetails = bankDetails ? JSON.parse(bankDetails) : undefined;
             } catch (e) {
                 console.error('Error parsing bankDetails:', e);
-                parsedBankDetails = undefined;
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid bank details format',
+                    error: e.message
+                });
             }
 
             // Create user object with all fields

@@ -7,17 +7,6 @@ const taskController = {
     // Get user's tasks
     getMyTasks: async (req, res) => {
         try {
-            const {
-                page = 1,
-                limit = 10,
-                status,
-                priority,
-                dueDate,
-                search,
-                sortBy = 'dueDate',
-                order = 'asc'
-            } = req.query;
-
             const query = {
                 $or: [
                     { assignedTo: req.user._id },
@@ -25,46 +14,23 @@ const taskController = {
                 ]
             };
 
-            // Apply filters
-            if (status) query.status = status;
-            if (priority) query.priority = priority;
-            if (dueDate) {
-                const date = new Date(dueDate);
-                query.dueDate = {
-                    $gte: date.setHours(0, 0, 0, 0),
-                    $lt: date.setHours(23, 59, 59, 999)
-                };
-            }
-            if (search) {
-                query.$or = [
-                    { title: { $regex: search, $options: 'i' } },
-                    { description: { $regex: search, $options: 'i' } }
-                ];
-            }
-
-            // Sorting
-            const sortOption = {};
-            sortOption[sortBy] = order === 'desc' ? -1 : 1;
-
             const tasks = await Task.find(query)
                 .populate('project', 'name')
                 .populate('assignedTo', 'name photo')
                 .populate('createdBy', 'name')
-                .sort(sortOption)
-                .limit(limit * 1)
-                .skip((page - 1) * limit);
-
-            const total = await Task.countDocuments(query);
+                .sort({ deadline: 1 });
 
             res.json({
-                tasks,
-                totalPages: Math.ceil(total / limit),
-                currentPage: page,
-                total
+                success: true,
+                data: tasks
             });
         } catch (error) {
             logger.error('Get my tasks error:', error);
-            res.status(500).json({ message: 'Failed to fetch tasks' });
+            res.status(500).json({
+                success: false,
+                message: 'Failed to fetch tasks',
+                error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+            });
         }
     },
 

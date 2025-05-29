@@ -1,6 +1,6 @@
 // models/userModel.js
 const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
+const bcryptjs = require('bcryptjs');
 const crypto = require('crypto');
 
 const resumeSchema = new mongoose.Schema({
@@ -147,7 +147,7 @@ const userSchema = new mongoose.Schema({
     },
     designation: {
         type: String,
-        enum: ['fullstack', 'frontend', 'backend', 'designer', 'hr', 'manager'],
+        enum: ['fullstack', 'frontend', 'backend', 'designer', 'hr', 'manager','superadmin'],
         required: true
     },
     department: {
@@ -169,7 +169,22 @@ const userSchema = new mongoose.Schema({
         min: 0
     },
     bankDetails: {
-        type: String
+        type: mongoose.Schema.Types.Mixed,
+        validate: {
+            validator: function(value) {
+                if (!value) return true;
+                if (typeof value === 'string') {
+                    try {
+                        const parsed = JSON.parse(value);
+                        return parsed && typeof parsed === 'object';
+                    } catch (e) {
+                        return false;
+                    }
+                }
+                return typeof value === 'object';
+            },
+            message: 'Bank details must be a valid object or JSON string'
+        }
     },
     skills: [{
         type: String,
@@ -269,7 +284,7 @@ async function generateEmployeeId() {
     return `${companyPrefix}-EMP-${String(nextNumber).padStart(4, '0')}`;
 }
 
-// Pre-validate middleware to set employeeId, userId, and password
+// Pre-validate middleware to set employeeId and userId
 userSchema.pre('validate', async function(next) {
     try {
         // Only for new non-superadmin users
@@ -279,9 +294,6 @@ userSchema.pre('validate', async function(next) {
             
             // Set userId to be the same as employeeId
             this.userId = this.employeeId;
-            
-            // Set initial password to be the same as employeeId
-            this.password = this.employeeId;
         }
         next();
     } catch (error) {
@@ -292,20 +304,24 @@ userSchema.pre('validate', async function(next) {
 // Pre-save middleware for password hashing and other operations
 userSchema.pre('save', async function(next) {
     try {
+        console.log('Pre-save middleware running');
+        console.log('Is password modified:', this.isModified('password'));
+        console.log('Original password:', this.password);
+        
         // Hash password if modified
         if (this.isModified('password')) {
-            const salt = await bcrypt.genSalt(10);
-            this.password = await bcrypt.hash(this.password, salt);
+            console.log('Hashing password...');
+            const salt = await bcryptjs.genSalt(10);
+            this.password = await bcryptjs.hash(this.password, salt);
+            console.log('Password hashed:', this.password);
+            
+            // Update passwordChangedAt when password is changed
+            this.passwordChangedAt = Date.now() - 1000;
         }
         
         // Update total points if performance modified
         if (this.isModified('performance')) {
             this.totalPoints = this.performance.reduce((total, p) => total + p.points, 0);
-        }
-
-        // Update passwordChangedAt when password is changed
-        if (this.isModified('password') || this.isNew) {
-            this.passwordChangedAt = Date.now() - 1000;
         }
 
         // Handle bank details
@@ -318,6 +334,7 @@ userSchema.pre('save', async function(next) {
 
         next();
     } catch (error) {
+        console.error('Error in pre-save middleware:', error);
         next(error);
     }
 });
@@ -332,7 +349,7 @@ userSchema.statics.formatBankDetails = function(details) {
 
 // Method to check password
 userSchema.methods.comparePassword = async function(candidatePassword) {
-    return bcrypt.compare(candidatePassword, this.password);
+    return bcryptjs.compare(candidatePassword, this.password);
 };
 
 // Method to calculate attendance percentage

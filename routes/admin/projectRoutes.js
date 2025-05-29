@@ -154,6 +154,13 @@ router.delete('/:id/tasks/:taskId',
     projectController.deleteProjectTask
 );
 
+// Team task assignment
+router.post('/:id/assign-tasks',
+    authenticate,
+    authorize(['admin', 'superadmin', 'manager', 'teamlead']),
+    projectController.assignTasksToTeam
+);
+
 // Project Team
 router.get('/:id/team', 
     authenticate, 

@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const fs = require('fs');
 const path = require('path');
 const logger = require('../../utils/logger');
+const { createNotification } = require('../../utils/notification');
 
 const userController = {
     // Login controller
@@ -102,36 +103,50 @@ const userController = {
     // Update profile
     updateProfile: async (req, res) => {
         try {
-            const user = await User.findById(req.user._id);
-            if (!user) {
-                return res.status(404).json({ message: 'User not found' });
+            const { name, email, phone } = req.body;
+            const userId = req.user._id;
+
+            // Check if email is already taken by another user
+            if (email) {
+                const existingUser = await User.findOne({ email, _id: { $ne: userId } });
+                if (existingUser) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Email is already taken'
+                    });
+                }
             }
 
-            // Fields that users can update
-            const allowedUpdates = ['name', 'email', 'phone', 'address'];
-            allowedUpdates.forEach(field => {
-                if (req.body[field]) {
-                    user[field] = req.body[field];
-                }
-            });
-
-            // Handle profile photo upload
-            if (req.file) {
-                // Delete old photo if exists
-                if (user.photo) {
-                    const oldPhotoPath = path.join(__dirname, '../../uploads/photos', user.photo);
-                    if (fs.existsSync(oldPhotoPath)) {
-                        fs.unlinkSync(oldPhotoPath);
+            const updatedUser = await User.findByIdAndUpdate(
+                userId,
+                {
+                    $set: {
+                        name,
+                        email,
+                        phone,
+                        updatedAt: new Date()
                     }
-                }
-                user.photo = req.file.filename;
+                },
+                { new: true, select: '-password' }
+            );
+
+            if (!updatedUser) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'User not found'
+                });
             }
 
-            await user.save();
-            res.json({ message: 'Profile updated successfully', user });
+            res.json({
+                success: true,
+                data: updatedUser
+            });
         } catch (error) {
-            logger.error('Update profile error:', error);
-            res.status(500).json({ message: 'Failed to update profile' });
+            console.error('Error updating profile:', error);
+            res.status(500).json({
+                success: false,
+                message: error.message || 'Internal server error'
+            });
         }
     },
 
@@ -139,27 +154,55 @@ const userController = {
     changePassword: async (req, res) => {
         try {
             const { currentPassword, newPassword } = req.body;
-            const user = await User.findById(req.user._id);
+            const userId = req.user._id;
 
+            const user = await User.findById(userId);
             if (!user) {
-                return res.status(404).json({ message: 'User not found' });
+                return res.status(404).json({
+                    success: false,
+                    message: 'User not found'
+                });
             }
 
             // Verify current password
             const isMatch = await bcrypt.compare(currentPassword, user.password);
             if (!isMatch) {
-                return res.status(401).json({ message: 'Current password is incorrect' });
+                return res.status(400).json({
+                    success: false,
+                    message: 'Current password is incorrect'
+                });
             }
 
             // Hash new password
             const salt = await bcrypt.genSalt(10);
-            user.password = await bcrypt.hash(newPassword, salt);
+            const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+            // Update password
+            user.password = hashedPassword;
+            user.updatedAt = new Date();
             await user.save();
 
-            res.json({ message: 'Password changed successfully' });
+            // Create notification
+            await createNotification({
+                userId: user._id,
+                type: 'security',
+                message: 'Your password has been changed successfully',
+                reference: {
+                    type: 'user',
+                    id: user._id
+                }
+            });
+
+            res.json({
+                success: true,
+                message: 'Password updated successfully'
+            });
         } catch (error) {
-            logger.error('Change password error:', error);
-            res.status(500).json({ message: 'Failed to change password' });
+            console.error('Error changing password:', error);
+            res.status(500).json({
+                success: false,
+                message: error.message || 'Internal server error'
+            });
         }
     },
 
@@ -177,6 +220,49 @@ const userController = {
         } catch (error) {
             logger.error('Get profile photo error:', error);
             res.status(500).json({ message: 'Failed to fetch photo' });
+        }
+    },
+
+    async updatePhoto(req, res) {
+        try {
+            if (!req.file) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'No photo uploaded'
+                });
+            }
+
+            const userId = req.user._id;
+            const photoUrl = req.file.path;
+
+            const updatedUser = await User.findByIdAndUpdate(
+                userId,
+                {
+                    $set: {
+                        photo: photoUrl,
+                        updatedAt: new Date()
+                    }
+                },
+                { new: true, select: '-password' }
+            );
+
+            if (!updatedUser) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'User not found'
+                });
+            }
+
+            res.json({
+                success: true,
+                data: updatedUser
+            });
+        } catch (error) {
+            console.error('Error updating photo:', error);
+            res.status(500).json({
+                success: false,
+                message: error.message || 'Internal server error'
+            });
         }
     }
 };
