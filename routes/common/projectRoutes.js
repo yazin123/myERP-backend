@@ -12,7 +12,5 @@ router.get('/:id', authenticate, projectController.getProjectById);
 // Project updates and notifications
 router.post('/:id/updates', authenticate, projectController.addProjectUpdate);
 router.get('/:id/updates', authenticate, projectController.getProjectUpdates);
-router.post('/:id/subscribe', authenticate, projectController.subscribeToProject);
-router.delete('/:id/subscribe', authenticate, projectController.unsubscribeFromProject);
 
 module.exports = router; 

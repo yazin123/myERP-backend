@@ -673,6 +673,33 @@ const userController = {
         } catch (error) {
             res.status(500).json({ message: error.message });
         }
+    },
+
+    // Add this to the userController object
+    getUsers: async (req, res) => {
+        try {
+            const users = await User.find()
+                .select('-password -bankDetails -loginAttempts')
+                .populate('role', 'name')
+                .lean();
+
+            // Transform the data to match the expected format
+            const transformedUsers = users.map(user => ({
+                _id: user._id,
+                name: user.name,
+                role: user.role.name,
+                department: user.department,
+                designation: user.designation,
+                position: user.position,
+                status: user.status,
+                email: user.email
+            }));
+
+            res.json(transformedUsers);
+        } catch (error) {
+            logger.error('Get users error:', error);
+            res.status(500).json({ message: 'Failed to fetch users' });
+        }
     }
 };
 

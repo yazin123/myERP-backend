@@ -114,6 +114,9 @@ router.put('/:id/change-password', authenticate, async (req, res, next) => {
     }
 }, userController.changePassword);
 
+// Get all users (protected, admin only)
+router.get('/', authenticate, authorize(['admin', 'superadmin']), userController.getUsers);
+
 module.exports = router;
 
 

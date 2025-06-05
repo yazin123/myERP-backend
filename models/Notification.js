@@ -4,8 +4,7 @@ const notificationSchema = new mongoose.Schema({
     recipient: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
-        required: true,
-        index: true
+        required: true
     },
     type: {
         type: String,
@@ -41,8 +40,7 @@ const notificationSchema = new mongoose.Schema({
     },
     read: {
         type: Boolean,
-        default: false,
-        index: true
+        default: false
     },
     readAt: Date,
     // Reference to related entities
@@ -77,13 +75,11 @@ const notificationSchema = new mongoose.Schema({
     },
     // For grouping related notifications
     group: {
-        type: String,
-        index: true
+        type: String
     },
     // For temporary notifications
     expiresAt: {
-        type: Date,
-        index: true
+        type: Date
     }
 }, {
     timestamps: true
@@ -93,6 +89,8 @@ const notificationSchema = new mongoose.Schema({
 notificationSchema.index({ recipient: 1, read: 1, createdAt: -1 });
 notificationSchema.index({ recipient: 1, type: 1, createdAt: -1 });
 notificationSchema.index({ 'reference.model': 1, 'reference.id': 1 });
+notificationSchema.index({ group: 1 });
+notificationSchema.index({ expiresAt: 1 });
 
 // Methods
 notificationSchema.methods.markAsRead = async function() {

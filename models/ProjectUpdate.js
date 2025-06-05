@@ -4,14 +4,12 @@ const projectUpdateSchema = new mongoose.Schema({
     project: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Project',
-        required: true,
-        index: true
+        required: true
     },
     user: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
-        required: true,
-        index: true
+        required: true
     },
     content: {
         type: String,
@@ -42,6 +40,11 @@ const projectUpdateSchema = new mongoose.Schema({
 }, {
     timestamps: true
 });
+
+// Compound indexes for common queries
+projectUpdateSchema.index({ project: 1, createdAt: -1 });
+projectUpdateSchema.index({ user: 1, createdAt: -1 });
+projectUpdateSchema.index({ project: 1, type: 1, createdAt: -1 });
 
 // Ensure project and user exist before saving
 projectUpdateSchema.pre('save', async function(next) {

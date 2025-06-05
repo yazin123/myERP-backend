@@ -26,30 +26,38 @@ const errorHandler = (err, req, res, next) => {
         user: req.user ? req.user._id : 'anonymous'
     });
 
+    let responseBody;
+
     if (process.env.NODE_ENV === 'development') {
-        res.status(err.statusCode).json({
+        responseBody = {
             status: err.status,
             error: err,
             message: err.message,
             stack: err.stack
-        });
+        };
     } else {
         // Production mode
         if (err.isOperational) {
             // Operational, trusted error: send message to client
-            res.status(err.statusCode).json({
+            responseBody = {
                 status: err.status,
                 message: err.message
-            });
+            };
         } else {
             // Programming or other unknown error: don't leak error details
             logger.error('ERROR 💥', err);
-            res.status(500).json({
+            responseBody = {
                 status: 'error',
                 message: 'Something went wrong!'
-            });
+            };
         }
     }
+
+    // Convert to JSON string first to ensure proper content length
+    const jsonResponse = JSON.stringify(responseBody);
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Length', Buffer.byteLength(jsonResponse));
+    res.status(err.statusCode).send(jsonResponse);
 };
 
 // Handle specific error types

@@ -4,12 +4,105 @@ const User = require('../models/User');
 const Project = require('../models/Project');
 const Task = require('../models/Task');
 const Performance = require('../models/Performance');
+const Department = require('../models/Department');
+const Designation = require('../models/Designation');
+const Role = require('../models/Role');
 require('dotenv').config();
 
-// Function to generate sequential employee IDs
-const generateEmployeeId = (index) => {
-    const companyPrefix = process.env.COMPANY_SHORT_NAME || 'NS';
-    return `${companyPrefix}-EMP-${String(index + 1).padStart(4, '0')}`;
+// Sample data arrays
+const departments = [
+    { name: 'Engineering', code: 'ENG', description: 'Software Development Team' },
+    { name: 'Design', code: 'DES', description: 'UI/UX Design Team' },
+    { name: 'Human Resources', code: 'HR', description: 'HR Management' },
+    { name: 'Project Management', code: 'PM', description: 'Project Management Office' },
+    { name: 'Quality Assurance', code: 'QA', description: 'Testing and Quality Control' }
+];
+
+const roles = [
+    { 
+        name: 'admin',
+        description: 'System Administrator',
+        level: 90,
+        isSystem: true,
+        canManageRoles: true,
+        permissions: ['all']
+    },
+    { 
+        name: 'manager',
+        description: 'Department Manager',
+        level: 70,
+        isSystem: true,
+        canManageRoles: false,
+        permissions: ['manage_team', 'view_reports', 'edit_tasks']
+    },
+    { 
+        name: 'employee',
+        description: 'Regular Employee',
+        level: 50,
+        isSystem: false,
+        canManageRoles: false,
+        permissions: ['view_tasks', 'edit_profile']
+    },
+    { 
+        name: 'intern',
+        description: 'Intern',
+        level: 30,
+        isSystem: false,
+        canManageRoles: false,
+        permissions: ['view_tasks']
+    }
+];
+
+const designations = [
+    { name: 'Software Engineer', level: 3, department: 'Engineering' },
+    { name: 'Senior Software Engineer', level: 4, department: 'Engineering' },
+    { name: 'UI/UX Designer', level: 3, department: 'Design' },
+    { name: 'HR Manager', level: 4, department: 'Human Resources' },
+    { name: 'Project Manager', level: 4, department: 'Project Management' },
+    { name: 'QA Engineer', level: 3, department: 'Quality Assurance' },
+    { name: 'Intern', level: 1, department: 'Engineering' }
+];
+
+const skills = [
+    'JavaScript', 'Python', 'React', 'Node.js', 'MongoDB',
+    'AWS', 'Docker', 'Kubernetes', 'UI/UX', 'Figma',
+    'Project Management', 'Agile', 'Scrum', 'Testing',
+    'CI/CD', 'Git', 'REST API', 'GraphQL'
+];
+
+const getRandomSkills = () => {
+    const numSkills = Math.floor(Math.random() * 5) + 2; // 2-6 skills per person
+    const shuffled = [...skills].sort(() => 0.5 - Math.random());
+    return shuffled.slice(0, numSkills);
+};
+
+const generateBankDetails = () => ({
+    accountName: 'Sample Account',
+    accountNumber: Math.random().toString().slice(2, 12),
+    bankName: 'Sample Bank',
+    branchCode: Math.random().toString().slice(2, 6),
+    ifscCode: 'SBIN' + Math.random().toString().slice(2, 7)
+});
+
+const generateAttendanceRecords = (startDate) => {
+    const records = [];
+    const currentDate = new Date();
+    let date = new Date(startDate);
+
+    while (date <= currentDate) {
+        if (date.getDay() !== 0 && date.getDay() !== 6) { // Skip weekends
+            const isPresent = Math.random() > 0.1; // 90% attendance rate
+            records.push({
+                date: new Date(date),
+                checkIn: isPresent ? new Date(date.setHours(9, Math.floor(Math.random() * 30), 0)) : null,
+                checkOut: isPresent ? new Date(date.setHours(17, 30 + Math.floor(Math.random() * 30), 0)) : null,
+                status: isPresent ? 'present' : 'absent',
+                wifiValidated: isPresent
+            });
+        }
+        date.setDate(date.getDate() + 1);
+    }
+    return records;
 };
 
 const seedData = async () => {
@@ -23,309 +116,174 @@ const seedData = async () => {
         await Project.deleteMany({});
         await Task.deleteMany({});
         await Performance.deleteMany({});
+        await Department.deleteMany({});
+        await Designation.deleteMany({});
+        await Role.deleteMany({});
 
-        // Create users with sequential employee IDs
+        // Create a temporary admin user for initial role creation
+        const tempAdminId = new mongoose.Types.ObjectId();
+
+        // Create roles first
+        const createdRoles = await Role.create(
+            roles.map(role => ({
+                ...role,
+                createdBy: tempAdminId // Use the temporary admin ID
+            }))
+        );
+        console.log('Created roles:', createdRoles.map(r => r.name).join(', '));
+
+        // Create departments
+        const createdDepartments = await Department.create(
+            departments.map(dept => ({
+                ...dept,
+                isActive: true,
+                createdBy: tempAdminId // Use the temporary admin ID
+            }))
+        );
+
+        // Create designations
+        const createdDesignations = await Designation.create(
+            designations.map(desig => ({
+                ...desig,
+                department: createdDepartments.find(d => d.name === desig.department)._id,
+                isActive: true,
+                createdBy: tempAdminId // Use the temporary admin ID
+            }))
+        );
+
+        // Create users with proper data
         const userDataArray = [
             {
-                name: 'Admin User',
-                email: 'admin@example.com',
+                name: 'John Smith',
+                email: 'john.smith@example.com',
                 role: 'admin',
-                status: 'active',
-                position: 'lead',
-                department: 'IT',
-                designation: 'manager',
-                phone: '+1234567890'
+                department: 'Engineering',
+                designation: 'Senior Software Engineer',
+                position: 'lead'
             },
             {
-                name: 'Project Manager',
-                email: 'pm@example.com',
+                name: 'Sarah Johnson',
+                email: 'sarah.j@example.com',
                 role: 'manager',
-                status: 'active',
-                position: 'senior',
                 department: 'Project Management',
-                designation: 'manager',
-                phone: '+1234567891'
+                designation: 'Project Manager',
+                position: 'senior'
             },
             {
-                name: 'Developer 1',
-                email: 'dev1@example.com',
+                name: 'Michael Chen',
+                email: 'michael.c@example.com',
                 role: 'employee',
-                status: 'active',
-                position: 'senior',
                 department: 'Engineering',
-                designation: 'fullstack',
-                phone: '+1234567892'
+                designation: 'Software Engineer',
+                position: 'senior'
             },
             {
-                name: 'Developer 2',
-                email: 'dev2@example.com',
+                name: 'Emily Davis',
+                email: 'emily.d@example.com',
                 role: 'employee',
-                status: 'active',
-                position: 'junior',
-                department: 'Engineering',
-                designation: 'backend',
-                phone: '+1234567893'
-            },
-            {
-                name: 'Frontend Developer',
-                email: 'frontend@example.com',
-                role: 'employee',
-                status: 'active',
-                position: 'senior',
-                department: 'Engineering',
-                designation: 'frontend',
-                phone: '+1234567894'
-            },
-            {
-                name: 'UI/UX Designer',
-                email: 'designer@example.com',
-                role: 'employee',
-                status: 'active',
-                position: 'junior',
                 department: 'Design',
-                designation: 'designer',
-                phone: '+1234567895'
+                designation: 'UI/UX Designer',
+                position: 'senior'
             },
             {
-                name: 'HR Manager',
-                email: 'hr@example.com',
+                name: 'Alex Turner',
+                email: 'alex.t@example.com',
+                role: 'employee',
+                department: 'Quality Assurance',
+                designation: 'QA Engineer',
+                position: 'junior'
+            },
+            {
+                name: 'Lisa Wong',
+                email: 'lisa.w@example.com',
                 role: 'manager',
-                status: 'active',
-                position: 'lead',
                 department: 'Human Resources',
-                designation: 'hr',
-                phone: '+1234567896'
+                designation: 'HR Manager',
+                position: 'senior'
             },
             {
-                name: 'Intern Developer',
-                email: 'intern@example.com',
+                name: 'David Miller',
+                email: 'david.m@example.com',
                 role: 'intern',
-                status: 'active',
-                position: 'intern',
                 department: 'Engineering',
-                designation: 'fullstack',
-                phone: '+1234567897'
+                designation: 'Intern',
+                position: 'intern'
             }
         ];
 
-        // Create users one by one to ensure middleware runs
         const users = [];
         for (const userData of userDataArray) {
-            // Create user without password first to get the employee ID
-            const user = new User(userData);
+            const dept = createdDepartments.find(d => d.name === userData.department);
+            const desig = createdDesignations.find(d => d.name === userData.designation);
+            const role = createdRoles.find(r => r.name === userData.role);
             
-            // Generate employee ID
-            const companyPrefix = process.env.COMPANY_SHORT_NAME || 'NS';
-            const latestEmployee = await User.findOne({
-                employeeId: { $regex: `^${companyPrefix}-EMP-` }
-            }).sort({ employeeId: -1 });
+            const joinDate = new Date();
+            joinDate.setMonth(joinDate.getMonth() - Math.floor(Math.random() * 24)); // Random join date within last 2 years
 
-            let nextNumber = 1;
-            if (latestEmployee && latestEmployee.employeeId) {
-                const currentNumber = parseInt(latestEmployee.employeeId.split('-').pop());
-                nextNumber = currentNumber + 1;
-            }
+            const user = new User({
+                ...userData,
+                role: role._id, // Set the role ID instead of the role name
+                phone: '+1' + Math.random().toString().slice(2, 11),
+                department: dept.name,
+                designation: desig.name,
+                dateOfJoining: joinDate,
+                salary: Math.floor(Math.random() * 50000) + 50000,
+                bankDetails: generateBankDetails(),
+                skills: getRandomSkills(),
+                status: 'active',
+                type: userData.role === 'intern' ? 'intern' : 'employee',
+                attendance: generateAttendanceRecords(joinDate)
+            });
 
-            const employeeId = `${companyPrefix}-EMP-${String(nextNumber).padStart(4, '0')}`;
-            
-            // Set employee ID and use it as the initial password
-            user.employeeId = employeeId;
-            user.userId = employeeId;
-            user.password = employeeId; // This will be hashed by the pre-save middleware
+            // Set initial password same as email (will be hashed by middleware)
+            user.password = user.email;
             
             await user.save();
             users.push(user);
-            console.log(`Created user: ${user.name} with ID: ${user.employeeId} (initial password is the same as ID)`);
+            console.log(`Created user: ${user.name} with ID: ${user.employeeId}`);
         }
 
-        // Create projects
-        const projects = await Project.insertMany([
-            {
-                name: 'ERP System Development',
-                description: 'Development of enterprise resource planning system',
-                projectHead: users[1]._id, // PM
-                members: [users[2]._id, users[3]._id, users[4]._id], // Developers
-                status: 'active',
-                priority: 'high',
-                progress: 75,
-                startDate: new Date(),
-                endDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
-                createdBy: users[0]._id,
-                techStack: ['Node.js', 'React', 'MongoDB']
-            },
-            {
-                name: 'Mobile App Development',
-                description: 'Development of mobile application',
-                projectHead: users[1]._id,
-                members: [users[2]._id, users[3]._id],
-                status: 'on-progress',
-                priority: 'medium',
-                progress: 30,
-                startDate: new Date(),
-                endDate: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000),
-                createdBy: users[0]._id,
-                techStack: ['React Native', 'Firebase']
-            },
-            {
-                name: 'Website Redesign',
-                description: 'Redesign of company website',
-                projectHead: users[1]._id,
-                members: [users[4]._id, users[5]._id], // Frontend dev and designer
-                status: 'created',
-                priority: 'low',
-                progress: 0,
-                startDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-                endDate: new Date(Date.now() + 37 * 24 * 60 * 60 * 1000),
-                createdBy: users[0]._id,
-                techStack: ['Next.js', 'TailwindCSS']
-            }
-        ]);
+        // Update the createdBy field for roles, departments, and designations with the actual admin user
+        const adminUser = users.find(u => u.role.equals(createdRoles.find(r => r.name === 'admin')._id));
+        
+        for (const role of createdRoles) {
+            role.createdBy = adminUser._id;
+            await role.save();
+        }
 
-        // Create tasks first to get their IDs for performance records
-        const tasks = await Task.insertMany([
-            {
-                description: 'Setup project infrastructure',
-                createdBy: users[1]._id,
-                assignedTo: users[2]._id, // Senior Fullstack Developer
-                project: projects[0]._id,
-                status: 'Completed',
-                priority: 'High',
-                deadline: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000)
-            },
-            {
-                description: 'Implement user authentication',
-                createdBy: users[1]._id,
-                assignedTo: users[2]._id, // Senior Fullstack Developer
-                project: projects[0]._id,
-                status: 'Progress',
-                priority: 'High',
-                deadline: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
-            },
-            {
-                description: 'Design database schema',
-                createdBy: users[1]._id,
-                assignedTo: users[3]._id, // Junior Backend Developer
-                project: projects[0]._id,
-                status: 'Progress',
-                priority: 'Medium',
-                deadline: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000)
-            },
-            {
-                description: 'Setup mobile app boilerplate',
-                createdBy: users[1]._id,
-                assignedTo: users[2]._id, // Senior Fullstack Developer
-                project: projects[1]._id,
-                status: 'Assigned',
-                priority: 'Medium',
-                deadline: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000)
-            },
-            {
-                description: 'Create UI mockups for website',
-                createdBy: users[1]._id,
-                assignedTo: users[5]._id, // Designer
-                project: projects[2]._id,
-                status: 'Assigned',
-                priority: 'Medium',
-                deadline: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-            },
-            {
-                description: 'Implement responsive frontend',
-                createdBy: users[1]._id,
-                assignedTo: users[4]._id, // Frontend Developer
-                project: projects[2]._id,
-                status: 'Assigned',
-                priority: 'Low',
-                deadline: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
-            }
-        ]);
+        for (const dept of createdDepartments) {
+            dept.createdBy = adminUser._id;
+            await dept.save();
+        }
 
-        // Create performance records
-        await Performance.insertMany([
-            {
-                user_id: users[2]._id, // Senior Fullstack Developer
-                createdBy: users[1]._id, // Created by Project Manager
-                points: 10,
-                category: 'task_completed',
-                remark: 'Completed infrastructure setup ahead of schedule',
-                taskId: tasks[0]._id
-            },
-            {
-                user_id: users[2]._id, // Senior Fullstack Developer
-                createdBy: 'CRON', // System generated
-                points: 5,
-                category: 'present',
-                remark: 'Regular attendance - present for full day'
-            },
-            {
-                user_id: users[3]._id, // Junior Backend Developer
-                createdBy: users[1]._id, // Created by Project Manager
-                points: 8,
-                category: 'task_completed',
-                remark: 'Excellent database design implementation',
-                taskId: tasks[2]._id
-            },
-            {
-                user_id: users[3]._id, // Junior Backend Developer
-                createdBy: 'CRON', // System generated
-                points: 3,
-                category: 'half_day',
-                remark: 'Half day attendance due to medical appointment'
-            },
-            {
-                user_id: users[4]._id, // Frontend Developer
-                createdBy: users[1]._id, // Created by Project Manager
-                points: 9,
-                category: 'task_completed',
-                remark: 'Clean and responsive UI implementation'
-            },
-            {
-                user_id: users[4]._id, // Frontend Developer
-                createdBy: 'CRON', // System generated
-                points: 8,
-                category: 'overtime',
-                remark: 'Worked overtime to meet project deadline'
-            },
-            {
-                user_id: users[5]._id, // Designer
-                createdBy: users[1]._id, // Created by Project Manager
-                points: 12,
-                category: 'task_completed',
-                remark: 'Outstanding UI/UX design concepts'
-            },
-            {
-                user_id: users[5]._id, // Designer
-                createdBy: 'CRON', // System generated
-                points: 5,
-                category: 'present',
-                remark: 'Regular attendance - present for full day'
-            },
-            {
-                user_id: users[7]._id, // Intern
-                createdBy: users[2]._id, // Created by Senior Developer
-                points: -2,
-                category: 'task_not_completed',
-                remark: 'Failed to complete assigned learning task on time'
-            },
-            {
-                user_id: users[7]._id, // Intern
-                createdBy: 'CRON', // System generated
-                points: 5,
-                category: 'present',
-                remark: 'Regular attendance - present for full day'
-            },
-            {
-                user_id: users[6]._id, // HR Manager
-                createdBy: 'CRON', // System generated
-                points: -5,
-                category: 'leave',
-                remark: 'Planned leave - annual vacation'
-            }
-        ]);
+        for (const desig of createdDesignations) {
+            desig.createdBy = adminUser._id;
+            await desig.save();
+        }
 
-        console.log('Test data has been seeded successfully');
-        console.log(`Created ${users.length} users with default password: ${users[0].password}`);
-        console.log(`Created ${projects.length} projects`);
-        console.log('Seed data matches User schema requirements');
+        // Set reporting relationships
+        const managerUsers = users.filter(u => u.role.equals(createdRoles.find(r => r.name === 'manager')._id));
+        const regularUsers = users.filter(u => !['admin', 'manager'].includes(createdRoles.find(r => r._id.equals(u.role)).name));
+
+        for (const manager of managerUsers) {
+            manager.reportingTo = adminUser._id;
+            await manager.save();
+        }
+
+        for (const user of regularUsers) {
+            const manager = managerUsers.find(m => m.department === user.department) || adminUser;
+            user.reportingTo = manager._id;
+            await user.save();
+        }
+
+        console.log('\nTest data has been seeded successfully');
+        console.log(`Created ${users.length} users`);
+        console.log(`Created ${createdDepartments.length} departments`);
+        console.log(`Created ${createdDesignations.length} designations`);
+        console.log(`Created ${createdRoles.length} roles`);
+        console.log('\nYou can login with any user using their email as the password');
+        console.log('Example: john.smith@example.com / john.smith@example.com');
+        
         process.exit(0);
     } catch (error) {
         console.error('Error seeding data:', error);

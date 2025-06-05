@@ -4,8 +4,7 @@ const activityLogSchema = new mongoose.Schema({
     user: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
-        required: true,
-        index: true
+        required: true
     },
     action: {
         type: String,
@@ -51,17 +50,17 @@ const activityLogSchema = new mongoose.Schema({
     userAgent: String,
     // For compliance and audit requirements
     retentionPeriod: {
-        type: Date,
-        index: true
+        type: Date
     }
 }, {
     timestamps: true
 });
 
 // Indexes for common queries
-activityLogSchema.index({ 'entity.model': 1, 'entity.id': 1 });
 activityLogSchema.index({ action: 1, createdAt: -1 });
 activityLogSchema.index({ user: 1, createdAt: -1 });
+activityLogSchema.index({ 'entity.model': 1, 'entity.id': 1 });
+activityLogSchema.index({ retentionPeriod: 1 });
 
 // Static methods
 activityLogSchema.statics.logActivity = async function(user, action, entity, description, metadata = {}, req = null) {

@@ -89,10 +89,9 @@ const userSchema = new mongoose.Schema({
         }
     },
     role: {
-        type: String,
-        enum: ['superadmin', 'admin', 'manager', 'employee', 'intern'],
-        required: true,
-        default: 'employee'
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Role',
+        required: true
     },
 
     // Personal Information
@@ -147,7 +146,6 @@ const userSchema = new mongoose.Schema({
     },
     designation: {
         type: String,
-        enum: ['fullstack', 'frontend', 'backend', 'designer', 'hr', 'manager','superadmin'],
         required: true
     },
     department: {
@@ -156,7 +154,6 @@ const userSchema = new mongoose.Schema({
     },
     position: {
         type: String,
-        enum: ['senior', 'junior', 'intern', 'lead'],
         required: true
     },
     dateOfJoining: {
@@ -463,6 +460,27 @@ userSchema.virtual('fullAddress').get(function() {
     
     return parts.filter(Boolean).join(', ');
 });
+
+// Add method to check if user has permission
+userSchema.methods.hasPermission = async function(permissionName) {
+    const RBACService = require('../services/rbacService');
+    return await RBACService.hasPermission(this, permissionName);
+};
+
+// Update getRoleLevel method to use populated role or fetch it if needed
+userSchema.methods.getRoleLevel = async function() {
+    if (this.role.level !== undefined) {
+        return this.role.level;
+    }
+    const RBACService = require('../services/rbacService');
+    return await RBACService.getRoleLevel(this.role);
+};
+
+// Add method to compare role with another role
+userSchema.methods.compareRoleWith = async function(otherRole) {
+    const RBACService = require('../services/rbacService');
+    return await RBACService.compareRoles(this.role, otherRole);
+};
 
 module.exports = mongoose.model('User', userSchema);
 

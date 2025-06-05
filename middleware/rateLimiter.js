@@ -1,5 +1,5 @@
 const { rateLimit } = require('express-rate-limit');
-const RedisStore = require('rate-limit-redis');
+const { RedisStore } = require('rate-limit-redis');
 const Redis = require('ioredis');
 const logger = require('../utils/logger');
 
@@ -14,7 +14,7 @@ redisClient.on('error', (err) => {
 // Base rate limiter configuration
 const createRateLimiter = (options) => rateLimit({
     store: new RedisStore({
-        client: redisClient,
+        sendCommand: (...args) => redisClient.call(...args),
         prefix: 'rl:', // Redis key prefix for rate limiter
         ...options.redis
     }),

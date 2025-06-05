@@ -144,13 +144,27 @@ const projectSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['created', 'active', 'on-progress', 'stopped', 'completed', 'cancelled'],
-        default: 'created'
+        enum: ['planning', 'in_progress', 'on_hold', 'completed', 'cancelled'],
+        default: 'planning'
     },
     priority: {
         type: String,
         enum: ['low', 'medium', 'high', 'urgent'],
         default: 'medium'
+    },
+    budget: {
+        allocated: {
+            type: Number,
+            required: true
+        },
+        spent: {
+            type: Number,
+            default: 0
+        },
+        currency: {
+            type: String,
+            default: 'USD'
+        }
     },
     progress: {
         type: Number,
@@ -169,6 +183,76 @@ const projectSchema = new mongoose.Schema({
     completedAt: {
         type: Date
     },
+    manager: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        required: true
+    },
+    team: [{
+        user: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User'
+        },
+        role: {
+            type: String,
+            enum: ['developer', 'designer', 'tester', 'analyst'],
+            required: true
+        },
+        joinedAt: {
+            type: Date,
+            default: Date.now
+        }
+    }],
+    milestones: [{
+        title: {
+            type: String,
+            required: true
+        },
+        description: String,
+        dueDate: Date,
+        status: {
+            type: String,
+            enum: ['pending', 'in_progress', 'completed', 'delayed'],
+            default: 'pending'
+        },
+        completedAt: Date
+    }],
+    documents: [{
+        title: String,
+        description: String,
+        fileUrl: String,
+        uploadedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User'
+        },
+        uploadedAt: {
+            type: Date,
+            default: Date.now
+        }
+    }],
+    risks: [{
+        title: String,
+        description: String,
+        severity: {
+            type: String,
+            enum: ['low', 'medium', 'high', 'critical']
+        },
+        mitigation: String,
+        status: {
+            type: String,
+            enum: ['identified', 'mitigated', 'occurred', 'resolved']
+        },
+        identifiedAt: {
+            type: Date,
+            default: Date.now
+        }
+    }],
+    department: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Department',
+        required: true
+    },
+    tags: [String],
     createdBy: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
@@ -178,7 +262,10 @@ const projectSchema = new mongoose.Schema({
         type: Date,
         default: Date.now
     },
-    updatedAt: Date,
+    updatedAt: {
+        type: Date,
+        default: Date.now
+    },
     memberRoles: {
         type: Map,
         of: {
@@ -194,10 +281,12 @@ const projectSchema = new mongoose.Schema({
 });
 
 // Indexes for better query performance
-projectSchema.index({ name: 1 });
+projectSchema.index({ name: 'text', description: 'text' });
+projectSchema.index({ status: 1, startDate: -1 });
+projectSchema.index({ department: 1, manager: 1 });
+projectSchema.index({ 'team.user': 1 });
 projectSchema.index({ projectHead: 1 });
 projectSchema.index({ members: 1 });
-projectSchema.index({ status: 1 });
 projectSchema.index({ techStack: 1 });
 projectSchema.index({ 'dates.date': 1 });
 projectSchema.index({ 'timeline.date': 1 });
@@ -209,8 +298,27 @@ projectSchema.virtual('tasks', {
     foreignField: 'projectId'
 });
 
+// Virtual for task count
+projectSchema.virtual('taskCount', {
+    ref: 'Task',
+    localField: '_id',
+    foreignField: 'project',
+    count: true
+});
+
+// Virtual for completed tasks count
+projectSchema.virtual('completedTaskCount', {
+    ref: 'Task',
+    localField: '_id',
+    foreignField: 'project',
+    count: true,
+    match: { status: 'completed' }
+});
+
 // Pre-save middleware
 projectSchema.pre('save', function(next) {
+    this.updatedAt = new Date();
+
     // Update history on status change
     if (this.isModified('status')) {
         const lastHistory = this.history[this.history.length - 1];
@@ -248,9 +356,9 @@ projectSchema.pre('save', function(next) {
                 this.status = 'completed';
                 this.completedAt = new Date();
             } else if (hasInProgressStage) {
-                this.status = 'on-progress';
-            } else if (hasStartedPhase && this.status === 'created') {
-                this.status = 'active';
+                this.status = 'in_progress';
+            } else if (hasStartedPhase && this.status === 'planning') {
+                this.status = 'in_progress';
             }
         }
     }
@@ -319,6 +427,18 @@ projectSchema.methods.isTeamMember = function(userId) {
 // Static method to find projects by tech stack
 projectSchema.statics.findByTechStack = function(techStack) {
     return this.find({ techStack: { $in: techStack } });
+};
+
+// Methods
+projectSchema.methods.calculateProgress = async function() {
+    const totalTasks = await mongoose.model('Task').countDocuments({ project: this._id });
+    const completedTasks = await mongoose.model('Task').countDocuments({ 
+        project: this._id,
+        status: 'completed'
+    });
+
+    this.progress = totalTasks ? Math.round((completedTasks / totalTasks) * 100) : 0;
+    await this.save();
 };
 
 const Project = mongoose.model('Project', projectSchema);

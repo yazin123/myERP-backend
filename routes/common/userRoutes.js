@@ -5,6 +5,8 @@ const path = require('path');
 const fs = require('fs');
 const { authenticate } = require('../../middleware/auth');
 const userController = require('../../controllers/common/userController');
+const BaseRoutes = require('./baseRoutes');
+const { validate, validationChains } = require('../../middleware/validation');
 
 // Configure multer for profile photo uploads
 const storage = multer.diskStorage({
@@ -34,15 +36,133 @@ const uploadMulter = multer({
     }
 });
 
-// Authentication routes
-router.post('/login', userController.login);
-router.post('/logout', authenticate, userController.logout);
+class UserRoutes extends BaseRoutes {
+    constructor() {
+        super(userController);
+    }
 
-// Profile routes
-router.get('/current', authenticate, userController.getCurrentUser);
-router.get('/profile/photo/:filename', userController.getProfilePhoto);
-router.put('/profile', authenticate, userController.updateProfile);
-router.put('/profile/password', authenticate, userController.changePassword);
-router.put('/profile/photo', authenticate, uploadMulter.single('photo'), userController.updatePhoto);
+    initializeRoutes() {
+        // Authentication routes (no authentication required)
+        this.createRoute(
+            '/login',
+            'POST',
+            this.controller.login
+        );
 
-module.exports = router; 
+        // Authentication required routes
+        this.createRoute(
+            '/logout',
+            'POST',
+            this.controller.logout,
+            { authenticate: true }
+        );
+
+        this.createRoute(
+            '/current',
+            'GET',
+            this.controller.getCurrentUser,
+            { authenticate: true }
+        );
+
+        // New route for getting user with role information
+        this.createRoute(
+            '/me/role',
+            'GET',
+            this.controller.getUserWithRole,
+            { authenticate: true }
+        );
+
+        // Profile routes
+        this.createRoute(
+            '/profile/photo/:filename',
+            'GET',
+            this.controller.getProfilePhoto
+        );
+
+        this.createRoute(
+            '/profile',
+            'PUT',
+            this.controller.updateProfile,
+            {
+                authenticate: true,
+                validator: validationChains.user.updateProfile
+            }
+        );
+
+        this.createRoute(
+            '/profile/password',
+            'PUT',
+            this.controller.changePassword,
+            {
+                authenticate: true,
+                validator: validationChains.user.changePassword
+            }
+        );
+
+        // Special route for photo upload with multer
+        this.router.put(
+            '/profile/photo',
+            authenticate,
+            uploadMulter.single('photo'),
+            this.controller.updatePhoto
+        );
+
+        // User management routes
+        this.createRoute(
+            '/',
+            'GET',
+            this.controller.getUsers,
+            {
+                authenticate: true,
+                permission: 'user.read'
+            }
+        );
+
+        this.createRoute(
+            '/:id',
+            'GET',
+            this.controller.getUserById,
+            {
+                authenticate: true,
+                permission: 'user.read',
+                validator: validationChains.user.getById
+            }
+        );
+
+        this.createRoute(
+            '/',
+            'POST',
+            this.controller.createUser,
+            {
+                authenticate: true,
+                permission: 'user.create',
+                validator: validationChains.user.create
+            }
+        );
+
+        this.createRoute(
+            '/:id',
+            'PUT',
+            this.controller.updateUser,
+            {
+                authenticate: true,
+                permission: 'user.update',
+                validator: validationChains.user.update
+            }
+        );
+
+        this.createRoute(
+            '/:id',
+            'DELETE',
+            this.controller.deleteUser,
+            {
+                authenticate: true,
+                permission: 'user.delete',
+                validator: validationChains.user.delete
+            }
+        );
+    }
+}
+
+// Export router instance
+module.exports = new UserRoutes().getRouter(); 

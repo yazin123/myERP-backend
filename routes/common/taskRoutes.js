@@ -3,11 +3,26 @@ const router = express.Router();
 const { authenticate } = require('../../middleware/auth');
 const taskController = require('../../controllers/common/taskController');
 
-// Get user's tasks with filters and pagination
+// Get all tasks with filtering
+router.get('/', authenticate, taskController.getTasks);
+
+// Get tasks board data (Kanban view)
+router.get('/board', authenticate, taskController.getTasksBoard);
+
+// Get user's tasks
 router.get('/my-tasks', authenticate, taskController.getMyTasks);
 
-// Get single task details (if user has access)
+// Create new task
+router.post('/', authenticate, taskController.createTask);
+
+// Get single task details
 router.get('/:id', authenticate, taskController.getTaskById);
+
+// Update task
+router.put('/:id', authenticate, taskController.updateTask);
+
+// Delete task
+router.delete('/:id', authenticate, taskController.deleteTask);
 
 // Update task status
 router.patch('/:id/status', authenticate, taskController.updateTaskStatus);
@@ -18,4 +33,4 @@ router.get('/:id/comments', authenticate, taskController.getTaskComments);
 router.put('/:id/comments/:commentId', authenticate, taskController.updateTaskComment);
 router.delete('/:id/comments/:commentId', authenticate, taskController.deleteTaskComment);
 
-module.exports = router; 
+module.exports = router;

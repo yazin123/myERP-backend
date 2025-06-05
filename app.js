@@ -8,11 +8,16 @@ const timeout = require('connect-timeout');
 const mongoSanitize = require('express-mongo-sanitize');
 const xss = require('xss-clean');
 const hpp = require('hpp');
+const path = require('path');
 const swaggerUi = require('swagger-ui-express');
 const logger = require('./utils/logger');
 const { errorHandler, notFound } = require('./middleware/errorHandler');
 const { dynamicRateLimit } = require('./middleware/rateLimiter');
 const swaggerSpec = require('./utils/swagger');
+const monitoring = require('./utils/monitoring');
+const mongoose = require('mongoose');
+const { ApiError } = require('./utils/errors');
+const NotificationServer = require('./websocket/notificationServer');
 
 const app = express();
 
@@ -51,6 +56,9 @@ app.use(hpp());
 // Compression
 app.use(compression());
 
+// Monitoring middleware
+app.use(monitoring.monitorRequest);
+
 // Logging
 if (process.env.NODE_ENV === 'development') {
     app.use(morgan('dev', { stream: logger.stream }));
@@ -64,6 +72,9 @@ app.use((req, res, next) => {
     if (!req.timedout) next();
 });
 
+// Static files
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
 // API Documentation
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
     explorer: true,
@@ -71,50 +82,100 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
 }));
 
 // Import routes
-const timelineEventRoutes = require('./routes/timelineEventRoutes');
-const taskRoutes = require('./routes/taskRoutes');
-const adminUserRoutes = require('./routes/admin/userRoutes');
-const adminProjectRoutes = require('./routes/admin/projectRoutes');
-const adminTaskRoutes = require('./routes/admin/taskRoutes');
-const adminMonitoringRoutes = require('./routes/admin/monitoringRoutes');
-const adminDashboardRoutes = require('./routes/admin/dashboardRoutes');
-const adminPerformanceRoutes = require('./routes/admin/performanceRoutes');
-const commonUserRoutes = require('./routes/common/userRoutes');
-const commonTaskRoutes = require('./routes/common/taskRoutes');
-const commonProjectRoutes = require('./routes/common/projectRoutes');
-const commonNotificationRoutes = require('./routes/common/notificationRoutes');
-const commonSystemRoutes = require('./routes/common/systemRoutes');
-const commonDashboardRoutes = require('./routes/common/dashboardRoutes');
-const dailyReportRoutes = require('./routes/common/dailyReportRoutes');
-const projectTaskRoutes = require('./routes/common/projectTaskRoutes');
+const routes = {
+    common: {
+        timeline: require('./routes/common/timelineEventRoutes'),
+        tasks: require('./routes/common/taskRoutes'),
+        users: require('./routes/common/userRoutes'),
+        projects: require('./routes/common/projectRoutes'),
+        notifications: require('./routes/common/notificationRoutes'),
+        system: require('./routes/common/systemRoutes'),
+        dashboard: require('./routes/common/dashboardRoutes'),
+        dailyReports: require('./routes/common/dailyReportRoutes'),
+        projectTasks: require('./routes/common/projectTaskRoutes')
+    },
+    admin: {
+        users: require('./routes/admin/userRoutes'),
+        projects: require('./routes/admin/projectRoutes'),
+        tasks: require('./routes/admin/taskRoutes'),
+        monitoring: require('./routes/admin/monitoringRoutes'),
+        performance: require('./routes/admin/performanceRoutes'),
+        rbac: require('./routes/admin/rbacRoutes'),
+        dashboard: require('./routes/admin/dashboardRoutes')
+    }
+};
 
 // Apply rate limiting to all API routes
 app.use('/api', dynamicRateLimit);
 
-// Mount routes
-app.use('/api/timeline', timelineEventRoutes);
-app.use('/api/tasks', taskRoutes);
+// Mount API routes - v1
+const API_V1_PREFIX = '/api/v1';
 
 // Common routes
-app.use('/api/users', commonUserRoutes);
-app.use('/api/tasks', commonTaskRoutes);
-app.use('/api/projects', commonProjectRoutes);
-app.use('/api/notifications', commonNotificationRoutes);
-app.use('/api/system', commonSystemRoutes);
-app.use('/api/dashboard', commonDashboardRoutes);
-app.use('/api/daily-reports', dailyReportRoutes);
-app.use('/api', projectTaskRoutes);
+app.use(`${API_V1_PREFIX}/timeline`, routes.common.timeline);
+app.use(`${API_V1_PREFIX}/tasks`, routes.common.tasks);
+app.use(`${API_V1_PREFIX}/users`, routes.common.users);
+app.use(`${API_V1_PREFIX}/projects`, routes.common.projects);
+app.use(`${API_V1_PREFIX}/notifications`, routes.common.notifications);
+app.use(`${API_V1_PREFIX}/system`, routes.common.system);
+app.use(`${API_V1_PREFIX}/dashboard`, routes.common.dashboard);
+app.use(`${API_V1_PREFIX}/daily-reports`, routes.common.dailyReports);
+app.use(`${API_V1_PREFIX}/project-tasks`, routes.common.projectTasks);
 
 // Admin routes
-app.use('/api/admin/users', adminUserRoutes);
-app.use('/api/admin/projects', adminProjectRoutes);
-app.use('/api/admin/tasks', adminTaskRoutes);
-app.use('/api/admin/monitoring', adminMonitoringRoutes);
-app.use('/api/admin/dashboard', adminDashboardRoutes);
-app.use('/api/admin/performance', adminPerformanceRoutes);
+app.use(`${API_V1_PREFIX}/admin/users`, routes.admin.users);
+app.use(`${API_V1_PREFIX}/admin/projects`, routes.admin.projects);
+app.use(`${API_V1_PREFIX}/admin/tasks`, routes.admin.tasks);
+app.use(`${API_V1_PREFIX}/admin/monitoring`, routes.admin.monitoring);
+app.use(`${API_V1_PREFIX}/admin/performance`, routes.admin.performance);
+app.use(`${API_V1_PREFIX}/admin/dashboard`, routes.admin.dashboard);
+app.use(`${API_V1_PREFIX}/admin`, routes.admin.rbac);
+
+// Health check endpoint
+app.get('/health', async (req, res) => {
+    try {
+        const health = await monitoring.getSystemHealth();
+        res.status(200).json(health);
+    } catch (error) {
+        logger.error('Health check error:', error);
+        res.status(500).json({
+            status: 'error',
+            message: 'Error checking system health'
+        });
+    }
+});
+
+// Base route
+app.get('/', (req, res) => {
+    res.send('Welcome to the Nesa ERP API');
+});
+
+// 404 handler
+app.use((req, res, next) => {
+    next(new ApiError(404, `Route ${req.originalUrl} not found`));
+});
 
 // Error handling
-app.use(notFound);
 app.use(errorHandler);
 
-module.exports = app; 
+// Create HTTP server
+const server = require('http').createServer(app);
+
+// Initialize WebSocket server
+const notificationServer = new NotificationServer();
+
+// Handle WebSocket upgrade
+server.on('upgrade', (request, socket, head) => {
+    if (request.url.startsWith('/notifications')) {
+        notificationServer.handleUpgrade(request, socket, head);
+    } else {
+        socket.destroy();
+    }
+});
+
+// Export both app and notification server
+module.exports = {
+    app,
+    server,
+    notificationServer
+}; 

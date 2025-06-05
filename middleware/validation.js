@@ -1,5 +1,7 @@
 const { validationResult, body, param, query } = require('express-validator');
 const { AppError } = require('./errorHandler');
+const Joi = require('joi');
+const logger = require('../utils/logger');
 
 // Middleware to check validation results
 const validate = (req, res, next) => {
@@ -100,24 +102,74 @@ const sanitize = (req, res, next) => {
 const validationChains = {
     user: {
         create: [
-            commonValidations.email,
-            commonValidations.password,
-            commonValidations.name
+            body('name').trim().isLength({ min: 2, max: 100 }).withMessage('Name must be between 2 and 100 characters'),
+            body('email').trim().isEmail().normalizeEmail().withMessage('Invalid email address'),
+            body('password')
+                .isLength({ min: 8, max: 30 })
+                .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/)
+                .withMessage('Password must contain at least one uppercase letter, one lowercase letter, one number and one special character'),
+            body('department').trim().notEmpty().withMessage('Department is required'),
+            body('position').trim().notEmpty().withMessage('Position is required'),
+            body('designation').trim().notEmpty().withMessage('Designation is required'),
+            body('phone')
+                .trim()
+                .matches(/^\+?[1-9]\d{1,14}$/)
+                .withMessage('Invalid phone number format'),
+            body('role').isMongoId().withMessage('Invalid role ID'),
+            body('type').isIn(['employee', 'contractor', 'intern']).withMessage('Invalid user type'),
+            body('dateOfJoining').isISO8601().toDate().withMessage('Invalid date format'),
+            body('status')
+                .optional()
+                .isIn(['active', 'inactive', 'suspended'])
+                .withMessage('Invalid status')
         ],
         update: [
-            commonValidations.id,
-            {
-                ...commonValidations.email,
-                optional: true
-            },
-            {
-                ...commonValidations.password,
-                optional: true
-            },
-            {
-                ...commonValidations.name,
-                optional: true
-            }
+            param('id').isMongoId().withMessage('Invalid user ID'),
+            body('name').optional().trim().isLength({ min: 2, max: 100 }).withMessage('Name must be between 2 and 100 characters'),
+            body('email').optional().trim().isEmail().normalizeEmail().withMessage('Invalid email address'),
+            body('department').optional().trim().notEmpty().withMessage('Department cannot be empty'),
+            body('position').optional().trim().notEmpty().withMessage('Position cannot be empty'),
+            body('designation').optional().trim().notEmpty().withMessage('Designation cannot be empty'),
+            body('phone')
+                .optional()
+                .trim()
+                .matches(/^\+?[1-9]\d{1,14}$/)
+                .withMessage('Invalid phone number format'),
+            body('role').optional().isMongoId().withMessage('Invalid role ID'),
+            body('type')
+                .optional()
+                .isIn(['employee', 'contractor', 'intern'])
+                .withMessage('Invalid user type'),
+            body('dateOfJoining')
+                .optional()
+                .isISO8601()
+                .toDate()
+                .withMessage('Invalid date format'),
+            body('status')
+                .optional()
+                .isIn(['active', 'inactive', 'suspended'])
+                .withMessage('Invalid status')
+        ],
+        getById: [
+            param('id').isMongoId().withMessage('Invalid user ID')
+        ],
+        delete: [
+            param('id').isMongoId().withMessage('Invalid user ID')
+        ],
+        changePassword: [
+            body('currentPassword').notEmpty().withMessage('Current password is required'),
+            body('newPassword')
+                .isLength({ min: 8, max: 30 })
+                .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/)
+                .withMessage('Password must contain at least one uppercase letter, one lowercase letter, one number and one special character')
+        ],
+        updateProfile: [
+            body('name').optional().trim().isLength({ min: 2, max: 100 }).withMessage('Name must be between 2 and 100 characters'),
+            body('phone')
+                .optional()
+                .trim()
+                .matches(/^\+?[1-9]\d{1,14}$/)
+                .withMessage('Invalid phone number format')
         ]
     },
     project: {
@@ -158,9 +210,83 @@ const validationChains = {
     }
 };
 
+/**
+ * Middleware to validate request data against a Joi schema
+ * @param {Object} schema - Joi validation schema
+ * @returns {Function} Express middleware function
+ */
+const validateRequest = (schema) => {
+    return (req, res, next) => {
+        if (!schema) {
+            return next();
+        }
+
+        const validationOptions = {
+            abortEarly: false, // Include all errors
+            allowUnknown: true, // Ignore unknown props
+            stripUnknown: true // Remove unknown props
+        };
+
+        const dataToValidate = {
+            body: req.body,
+            query: req.query,
+            params: req.params
+        };
+
+        try {
+            const { error, value } = schema.validate(dataToValidate, validationOptions);
+            
+            if (error) {
+                const errorDetails = error.details.map(detail => ({
+                    message: detail.message,
+                    path: detail.path
+                }));
+
+                logger.warn('Validation error:', { 
+                    path: req.path, 
+                    errors: errorDetails 
+                });
+
+                throw new AppError('Validation Error', 400, errorDetails);
+            }
+
+            // Replace request data with validated data
+            req.body = value.body;
+            req.query = value.query;
+            req.params = value.params;
+
+            next();
+        } catch (err) {
+            next(err);
+        }
+    };
+};
+
+// Common validation schemas
+const commonSchemas = {
+    id: Joi.string().regex(/^[0-9a-fA-F]{24}$/).messages({
+        'string.pattern.base': 'Invalid ID format'
+    }),
+    
+    pagination: Joi.object({
+        page: Joi.number().integer().min(1).default(1),
+        limit: Joi.number().integer().min(1).max(100).default(10),
+        sort: Joi.string(),
+        search: Joi.string().allow(''),
+        fields: Joi.string()
+    }),
+
+    dateRange: Joi.object({
+        startDate: Joi.date().iso(),
+        endDate: Joi.date().iso().min(Joi.ref('startDate'))
+    })
+};
+
 module.exports = {
     validate,
     sanitize,
     commonValidations,
-    validationChains
+    validationChains,
+    validateRequest,
+    commonSchemas
 }; 

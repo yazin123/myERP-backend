@@ -5,24 +5,31 @@ const fs = require('fs');
 const path = require('path');
 const logger = require('../../utils/logger');
 const { createNotification } = require('../../utils/notification');
+const RolePermission = require('../../models/RolePermission');
+const mongoose = require('mongoose');
 
 const userController = {
     // Login controller
     login: async (req, res) => {
         try {
+            console.log("================trying to login");
             const { userId, password } = req.body;
-            let user = await User.findOne({ userId });
+            let user = await User.findOne({ userId })
+                .populate('role', 'name level isSystem canManageRoles'); // Populate role information
     
             if (!user) {
+                console.log("================user not found");
                 return res.status(401).json({ message: 'Invalid credentials' });
             }
     
             const isMatch = await bcrypt.compare(password, user.password);
             if (!isMatch) {
+                console.log("================password not match");
                 return res.status(401).json({ message: 'Invalid credentials' });
             }
 
             if (user.status !== 'active') {
+                console.log("================account not active");
                 return res.status(401).json({ message: 'Account is not active' });
             }
     
@@ -36,15 +43,25 @@ const userController = {
                 lastLogin: new Date(),
                 loginCount: (user.loginDetails?.loginCount || 0) + 1
             };
-
+            console.log("================user.loginDetails", user.loginDetails);
             // Use save with validation
             await user.save({ validateBeforeSave: true });
+
+            // Get role permissions if not superadmin
+            let permissions = [];
+            if (user.role.name !== 'superadmin') {
+                const rolePermissions = await RolePermission.find({ role: user.role._id, granted: true })
+                    .populate('permission', 'name')
+                    .lean();
+                permissions = rolePermissions.map(rp => rp.permission.name);
+            }
     
             const token = jwt.sign(
                 { 
                     userId: user._id, 
-                    role: user.role,
-                    employeeId: user.employeeId 
+                    role: user.role._id,
+                    roleName: user.role.name,
+                    email: user.email 
                 },
                 process.env.JWT_SECRET,
                 { expiresIn: process.env.JWT_EXPIRY || '24h' }
@@ -55,15 +72,19 @@ const userController = {
                 user: {
                     id: user._id,
                     name: user.name,
-                    role: user.role,
+                    role: user.role.name,
+                    roleId: user.role._id,
+                    roleLevel: user.role.level || 0,
                     department: user.department,
                     employeeId: user.employeeId,
                     designation: user.designation,
                     position: user.position,
-                    photo: user.photo
+                    photo: user.photo,
+                    permissions: user.role.name === 'superadmin' ? ['*'] : permissions
                 }
             });
         } catch (error) {
+            console.log("Login error:", error);
             logger.error('Login error:', error);
             res.status(500).json({ message: 'Login failed' });
         }
@@ -263,6 +284,72 @@ const userController = {
                 success: false,
                 message: error.message || 'Internal server error'
             });
+        }
+    },
+
+    // Get user with complete role information
+    getUserWithRole: async (req, res) => {
+        try {
+            let user;
+            const id = req.user.userId;
+
+            // Check if the ID is a valid ObjectId
+            if (mongoose.Types.ObjectId.isValid(id)) {
+                user = await User.findById(id)
+                    .populate('role', 'name level permissions isSystem canManageRoles')
+                    .select('-password');
+            }
+
+            // If not found by _id, try to find by userId field
+            if (!user) {
+                user = await User.findOne({ userId: id })
+                    .populate('role', 'name level permissions isSystem canManageRoles')
+                    .select('-password');
+            }
+
+            if (!user) {
+                return res.status(404).json({ message: 'User not found' });
+            }
+
+            // Get role permissions if not superadmin
+            let permissions = [];
+            if (user.role.name !== 'superadmin') {
+                const rolePermissions = await RolePermission.find({ role: user.role._id, granted: true })
+                    .populate('permission', 'name')
+                    .lean();
+                permissions = rolePermissions.map(rp => rp.permission.name);
+            }
+
+            const userData = {
+                id: user._id,
+                name: user.name,
+                email: user.email,
+                role: user.role.name,
+                roleId: user.role._id,
+                roleLevel: user.role.level || 0,
+                department: user.department,
+                employeeId: user.employeeId,
+                designation: user.designation,
+                position: user.position,
+                photo: user.photo,
+                permissions: user.role.name === 'superadmin' ? ['*'] : permissions,
+                // Include other necessary fields
+                status: user.status,
+                phone: user.phone,
+                dateOfJoining: user.dateOfJoining,
+                type: user.type,
+                projects: user.projects,
+                tasks: user.tasks,
+                performance: user.performance,
+                totalPoints: user.totalPoints,
+                attendance: user.attendance,
+                loginDetails: user.loginDetails
+            };
+
+            res.json(userData);
+        } catch (error) {
+            logger.error('Get user with role error:', error);
+            res.status(500).json({ message: 'Failed to fetch user details' });
         }
     }
 };

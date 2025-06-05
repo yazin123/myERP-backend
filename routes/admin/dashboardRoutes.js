@@ -1,10 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const { adminAuth } = require('../../middleware/auth');
-const dashboardController = require('../../controllers/admin/dashboardController');
+const { auth, isAdmin } = require('../../middleware/auth');
+const dashboardController = require('../../controllers/common/dashboardController');
 
-// Dashboard routes
-router.get('/', adminAuth, dashboardController.getDashboardStats);
-router.get('/stats', adminAuth, dashboardController.getDashboardStats); // Keep for backward compatibility
+// Admin dashboard routes
+router.get('/stats', [auth, isAdmin], dashboardController.getAdminDashboardStats);
 
 module.exports = router; 

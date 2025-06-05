@@ -1,9 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate } = require('../../middleware/auth');
+const { auth } = require('../../middleware/auth');
 const dashboardController = require('../../controllers/common/dashboardController');
 
-// Dashboard routes for regular users
-router.get('/', authenticate, dashboardController.getMyDashboardStats);
+// User dashboard routes
+router.get('/stats', auth, dashboardController.getUserDashboardStats);
 
 module.exports = router; 
