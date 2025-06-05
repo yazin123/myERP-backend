@@ -11,7 +11,8 @@
     "test:coverage": "jest --coverage",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "seed": "node scripts/seedData.js"
+    "seed": "node scripts/seedData.js",
+    "init:superadmin": "node scripts/initializeSuperAdmin.js"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",

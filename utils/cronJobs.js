@@ -394,7 +394,7 @@ const updateProjectProgress = async () => {
             let totalStages = 3; // Fixed stages
             
             ['requirementGathering', 'architectCreation', 'architectSubmission'].forEach(stage => {
-                if (project.pipeline[stage].status === 'completed') completedStages++;
+                if (project.pipeline[stage]?.status === 'completed') completedStages++;
             });
             
             totalStages += project.pipeline.developmentPhases.length;
@@ -402,8 +402,13 @@ const updateProjectProgress = async () => {
                 phase.status === 'completed'
             ).length;
 
-            project.progress = Math.round((completedStages / totalStages) * 100);
-            await project.save();
+            const progress = Math.round((completedStages / totalStages) * 100);
+            
+            // Only update the progress field
+            await Project.findByIdAndUpdate(project._id, { progress }, { 
+                new: true,
+                runValidators: false // Skip validation since we're only updating progress
+            });
         }
     } catch (error) {
         console.log('Error in updateProjectProgress:', error);

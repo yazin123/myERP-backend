@@ -1,4 +1,4 @@
-const { AppError } = require('../utils/error');
+const { AppError } = require('./errorHandler');
 const RBACService = require('../services/rbacService');
 const logger = require('../utils/logger');
 
@@ -7,13 +7,13 @@ const checkPermission = (permissionName) => {
     return async (req, res, next) => {
         try {
             if (!req.user) {
-                throw new AppError('Unauthorized', 401);
+                throw new AppError(401, 'Unauthorized');
             }
 
             // If user has no role, deny access
             if (!req.user.role) {
                 logger.error(`No role found for user ${req.user._id}`);
-                throw new AppError('Insufficient permissions', 403);
+                throw new AppError(403, 'Insufficient permissions');
             }
 
             // Check if user has the required permission
@@ -21,7 +21,7 @@ const checkPermission = (permissionName) => {
             
             if (!hasPermission) {
                 logger.warn(`User ${req.user._id} denied access to ${permissionName}`);
-                throw new AppError('Insufficient permissions', 403);
+                throw new AppError(403, 'Insufficient permissions');
             }
 
             next();
@@ -30,7 +30,7 @@ const checkPermission = (permissionName) => {
                 next(error);
             } else {
                 logger.error('Permission check error:', error);
-                next(new AppError('Internal server error', 500));
+                next(new AppError(500, 'Internal server error'));
             }
         }
     };

@@ -5,14 +5,15 @@ const Role = require('../../models/Role');
 const Performance = require('../../models/Performance');
 const logger = require('../../utils/logger');
 
-
-
 const dashboardController = {
     // Get user dashboard statistics
     getUserDashboardStats: async (req, res) => {
         try {
-            const userId = req.user.userId;
-            const user = await User.findById(userId).populate('role');
+            // Get user from request (set by auth middleware)
+            const user = req.user;
+            if (!user) {
+                throw new Error('User not found');
+            }
 
             // Base stats for user
             const stats = {
@@ -44,7 +45,7 @@ const dashboardController = {
             };
 
             // Get task statistics
-            const tasks = await Task.find({ assignedTo: userId })
+            const tasks = await Task.find({ assignedTo: user._id })
                 .populate('project', 'name status')
                 .sort({ dueDate: 1 });
 
@@ -85,7 +86,7 @@ const dashboardController = {
                 }));
 
             // Get project statistics
-            const projects = await Project.find({ members: userId })
+            const projects = await Project.find({ members: user._id })
                 .sort({ updatedAt: -1 });
 
             // Calculate project stats
@@ -123,7 +124,7 @@ const dashboardController = {
             // Calculate performance statistics
             const allUsers = await User.find({}, 'totalPoints');
             const sortedUsers = allUsers.sort((a, b) => b.totalPoints - a.totalPoints);
-            stats.performance.rank = sortedUsers.findIndex(u => u._id.toString() === userId) + 1;
+            stats.performance.rank = sortedUsers.findIndex(u => u._id.toString() === user._id.toString()) + 1;
 
             // Calculate attendance percentage
             const today = new Date();
@@ -158,8 +159,10 @@ const dashboardController = {
     // Get admin dashboard statistics
     getAdminDashboardStats: async (req, res) => {
         try {
-            const userId = req.user.userId;
-            const user = await User.findById(userId).populate('role');
+            const user = req.user;
+            if (!user) {
+                throw new Error('User not found');
+            }
 
             // Base stats that everyone gets
             const stats = {
@@ -234,7 +237,7 @@ const dashboardController = {
             // Get performance statistics
             const allUsers = await User.find({}, 'totalPoints');
             const sortedUsers = allUsers.sort((a, b) => b.totalPoints - a.totalPoints);
-            stats.performance.rank = sortedUsers.findIndex(u => u._id.toString() === userId) + 1;
+            stats.performance.rank = sortedUsers.findIndex(u => u._id.toString() === user._id.toString()) + 1;
 
             // Add admin-specific statistics
             stats.users = {

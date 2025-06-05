@@ -51,9 +51,10 @@ class RBACService {
     static async hasPermission(user, permissionName, context = {}) {
         try {
             // Superadmin always has all permissions
-            if (user.role === 'superadmin') return true;
+            if (user.role.name === 'superadmin') return true;
 
-            const userRole = await Role.findOne({ name: user.role });
+            // No need to find the role again since it's populated
+            const userRole = user.role;
             if (!userRole) return false;
 
             // Get all roles in the hierarchy (including parent roles)

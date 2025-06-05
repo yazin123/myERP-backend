@@ -1,32 +1,39 @@
 const Department = require('../../models/Department');
+const Designation = require('../../models/Designation');
 const logger = require('../../utils/logger');
-const { validateObjectId } = require('../utils/validation');
-const { AppError } = require('../../utils/error');
+const { validateObjectId } = require('../../utils/validation');
+const { AppError } = require('../../middleware/errorHandler');
 
 const departmentController = {
     // Get all departments
-    getAllDepartments: async (req, res) => {
+    getAllDepartments: async (req, res, next) => {
         try {
             const departments = await Department.find()
+                .populate('head', 'name email')
                 .sort('name')
                 .select('name code description createdAt');
 
-            res.json(departments);
+            res.status(200).json({
+                success: true,
+                data: {
+                    departments: departments
+                }
+            });
         } catch (error) {
             logger.error('Get departments error:', error);
-            res.status(500).json({ message: 'Failed to fetch departments' });
+            next(new AppError(500, 'Failed to fetch departments'));
         }
     },
 
     // Create new department
-    createDepartment: async (req, res) => {
+    createDepartment: async (req, res, next) => {
         try {
             const { name, code, description } = req.body;
 
             // Check if department with same code exists
             const existingDepartment = await Department.findOne({ code });
             if (existingDepartment) {
-                return res.status(400).json({ message: 'Department code already exists' });
+                return next(new AppError(400, 'Department code already exists'));
             }
 
             const department = new Department({
@@ -37,22 +44,32 @@ const departmentController = {
             });
 
             await department.save();
-            res.status(201).json(department);
+            
+            res.status(201).json({
+                success: true,
+                data: {
+                    department: department
+                }
+            });
         } catch (error) {
             logger.error('Create department error:', error);
-            res.status(500).json({ message: 'Failed to create department' });
+            next(new AppError(500, 'Failed to create department'));
         }
     },
 
     // Update department
-    updateDepartment: async (req, res) => {
+    updateDepartment: async (req, res, next) => {
         try {
             const { id } = req.params;
             const { name, description } = req.body;
 
+            if (!validateObjectId(id)) {
+                return next(new AppError(400, 'Invalid department ID'));
+            }
+
             const department = await Department.findById(id);
             if (!department) {
-                return res.status(404).json({ message: 'Department not found' });
+                return next(new AppError(404, 'Department not found'));
             }
 
             department.name = name;
@@ -61,62 +78,98 @@ const departmentController = {
             department.lastModifiedAt = Date.now();
 
             await department.save();
-            res.json(department);
+            
+            res.status(200).json({
+                success: true,
+                data: department
+            });
         } catch (error) {
             logger.error('Update department error:', error);
-            res.status(500).json({ message: 'Failed to update department' });
+            next(new AppError(500, 'Failed to update department'));
         }
     },
 
     // Delete department
-    deleteDepartment: async (req, res) => {
+    deleteDepartment: async (req, res, next) => {
         try {
             const { id } = req.params;
 
+            if (!validateObjectId(id)) {
+                return next(new AppError(400, 'Invalid department ID'));
+            }
+
             const department = await Department.findById(id);
             if (!department) {
-                return res.status(404).json({ message: 'Department not found' });
+                return next(new AppError(404, 'Department not found'));
             }
 
             // Check if department has any associated designations
             const hasDesignations = await Designation.exists({ department: id });
             if (hasDesignations) {
-                return res.status(400).json({ 
-                    message: 'Cannot delete department with existing designations' 
-                });
+                return next(new AppError(400, 'Cannot delete department with existing designations'));
             }
 
-            await department.remove();
-            res.json({ message: 'Department deleted successfully' });
+            await department.deleteOne();
+            
+            res.status(200).json({
+                success: true,
+                message: 'Department deleted successfully'
+            });
         } catch (error) {
             logger.error('Delete department error:', error);
-            res.status(500).json({ message: 'Failed to delete department' });
+            next(new AppError(500, 'Failed to delete department'));
+        }
+    },
+
+    // Get department designations
+    getDepartmentDesignations: async (req, res, next) => {
+        try {
+            const { departmentId } = req.params;
+
+            if (!validateObjectId(departmentId)) {
+                return next(new AppError(400, 'Invalid department ID'));
+            }
+
+            const designations = await Designation.find({ department: departmentId })
+                .sort('name')
+                .select('name description level createdAt');
+
+            res.status(200).json({
+                success: true,
+                data: designations
+            });
+        } catch (error) {
+            logger.error('Get department designations error:', error);
+            next(new AppError(500, 'Failed to fetch department designations'));
+        }
+    },
+
+    // Get department by ID
+    getDepartmentById: async (req, res, next) => {
+        try {
+            const { id } = req.params;
+
+            if (!validateObjectId(id)) {
+                return next(new AppError(400, 'Invalid department ID'));
+            }
+
+            const department = await Department.findOne({ _id: id, isActive: true });
+
+            if (!department) {
+                return next(new AppError(404, 'Department not found'));
+            }
+
+            res.status(200).json({
+                success: true,
+                data: {
+                    department: department
+                }
+            });
+        } catch (error) {
+            logger.error('Get department by ID error:', error);
+            next(new AppError(500, 'Failed to fetch department'));
         }
     }
 };
 
-module.exports = departmentController;
-
-// Get department by ID
-exports.getDepartmentById = async (req, res, next) => {
-    try {
-        const { id } = req.params;
-
-        if (!validateObjectId(id)) {
-            return next(new AppError('Invalid department ID', 400));
-        }
-
-        const department = await Department.findOne({ _id: id, isActive: true });
-
-        if (!department) {
-            return next(new AppError('Department not found', 404));
-        }
-
-        res.status(200).json({
-            success: true,
-            data: department
-        });
-    } catch (error) {
-        next(error);
-    }
-}; 
+module.exports = departmentController; 

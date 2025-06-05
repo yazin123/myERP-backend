@@ -4,7 +4,8 @@ const designationSchema = new mongoose.Schema({
     name: {
         type: String,
         required: [true, 'Designation name is required'],
-        trim: true
+        trim: true,
+        index: false
     },
     department: {
         type: mongoose.Schema.Types.ObjectId,

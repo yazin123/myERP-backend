@@ -92,7 +92,8 @@ const routes = {
         system: require('./routes/common/systemRoutes'),
         dashboard: require('./routes/common/dashboardRoutes'),
         dailyReports: require('./routes/common/dailyReportRoutes'),
-        projectTasks: require('./routes/common/projectTaskRoutes')
+        projectTasks: require('./routes/common/projectTaskRoutes'),
+        calendar: require('./routes/common/calendarRoutes')
     },
     admin: {
         users: require('./routes/admin/userRoutes'),
@@ -101,7 +102,9 @@ const routes = {
         monitoring: require('./routes/admin/monitoringRoutes'),
         performance: require('./routes/admin/performanceRoutes'),
         rbac: require('./routes/admin/rbacRoutes'),
-        dashboard: require('./routes/admin/dashboardRoutes')
+        dashboard: require('./routes/admin/dashboardRoutes'),
+        departments: require('./routes/admin/departmentRoutes'),
+        designations: require('./routes/admin/designationRoutes')
     }
 };
 
@@ -113,14 +116,15 @@ const API_V1_PREFIX = '/api/v1';
 
 // Common routes
 app.use(`${API_V1_PREFIX}/timeline`, routes.common.timeline);
+app.use(`${API_V1_PREFIX}/projects`, routes.common.projects);
 app.use(`${API_V1_PREFIX}/tasks`, routes.common.tasks);
 app.use(`${API_V1_PREFIX}/users`, routes.common.users);
-app.use(`${API_V1_PREFIX}/projects`, routes.common.projects);
 app.use(`${API_V1_PREFIX}/notifications`, routes.common.notifications);
 app.use(`${API_V1_PREFIX}/system`, routes.common.system);
 app.use(`${API_V1_PREFIX}/dashboard`, routes.common.dashboard);
 app.use(`${API_V1_PREFIX}/daily-reports`, routes.common.dailyReports);
 app.use(`${API_V1_PREFIX}/project-tasks`, routes.common.projectTasks);
+app.use(`${API_V1_PREFIX}/calendar`, routes.common.calendar);
 
 // Admin routes
 app.use(`${API_V1_PREFIX}/admin/users`, routes.admin.users);
@@ -129,6 +133,8 @@ app.use(`${API_V1_PREFIX}/admin/tasks`, routes.admin.tasks);
 app.use(`${API_V1_PREFIX}/admin/monitoring`, routes.admin.monitoring);
 app.use(`${API_V1_PREFIX}/admin/performance`, routes.admin.performance);
 app.use(`${API_V1_PREFIX}/admin/dashboard`, routes.admin.dashboard);
+app.use(`${API_V1_PREFIX}/admin/departments`, routes.admin.departments);
+app.use(`${API_V1_PREFIX}/admin/designations`, routes.admin.designations);
 app.use(`${API_V1_PREFIX}/admin`, routes.admin.rbac);
 
 // Health check endpoint

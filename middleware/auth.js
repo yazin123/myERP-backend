@@ -60,15 +60,15 @@ const verifyToken = async (token, secret) => {
         // Check if token is blacklisted
         const isBlacklisted = await redis.get(`bl_${token}`);
         if (isBlacklisted) {
-            throw new AppError('Token has been invalidated', 401);
+            throw new AppError(401, 'Token has been invalidated');
         }
         
         return decoded;
     } catch (error) {
         if (error.name === 'TokenExpiredError') {
-            throw new AppError('Token has expired', 401);
+            throw new AppError(401, 'Token has expired');
         }
-        throw new AppError('Invalid token', 401);
+        throw new AppError(401, 'Invalid token');
     }
 };
 
@@ -92,8 +92,9 @@ const auth = async (req, res, next) => {
             throw new ApiError(401, 'Account is not active');
         }
 
-        req.user = decoded;
-        req.userRole = user.role;
+        // Set both the decoded token and the full user object
+        req.user = user;
+        req.token = decoded;
         next();
     } catch (error) {
         logger.error('Authentication error:', error);
@@ -106,34 +107,28 @@ const auth = async (req, res, next) => {
 };
 
 // Role-based authorization middleware
-const authorize = (roles = [], options = {}) => {
-    if (typeof roles === 'string') {
-        roles = [roles];
-    }
-
+const authorize = (requiredLevel = 0, options = {}) => {
     return [
         auth,
         async (req, res, next) => {
             try {
                 if (!req.user) {
-                    throw new AppError('Unauthorized', 401);
+                    throw new AppError(401, 'Unauthorized');
                 }
 
-                // Superadmin has all permissions
-                if (req.user.role.name === 'superadmin') {
-                    return next();
+                // Get user's role level
+                const userRoleLevel = req.user.role.level || 0;
+
+                // Check if user's role level meets the required level
+                if (userRoleLevel < requiredLevel) {
+                    throw new AppError(403, 'Insufficient permissions');
                 }
 
-                // Check if user's role is in the allowed roles
-                if (roles.length && !roles.includes(req.user.role.name)) {
-                    throw new AppError('Insufficient permissions', 403);
-                }
-
-                // Handle user management checks
+                // Handle user management checks if specified
                 if (options.checkUserManagement) {
                     const targetUserId = req.params.id;
                     if (!targetUserId) {
-                        throw new AppError('User ID is required', 400);
+                        throw new AppError(400, 'User ID is required');
                     }
 
                     const targetUser = await User.findById(targetUserId)
@@ -142,19 +137,15 @@ const authorize = (roles = [], options = {}) => {
                         .lean();
 
                     if (!targetUser) {
-                        throw new AppError('Target user not found', 404);
+                        throw new AppError(404, 'Target user not found');
                     }
 
-                    // Compare role levels
-                    const comparison = await RBACService.compareRoles(
-                        req.user.role.name,
-                        targetUser.role.name
-                    );
+                    const targetRoleLevel = targetUser.role.level || 0;
 
-                    // Prevent modification of users with same or higher role
+                    // Prevent modification of users with same or higher role level
                     // Exception: users can modify their own profile
-                    if (comparison <= 0 && targetUser._id.toString() !== req.user._id.toString()) {
-                        throw new AppError('Cannot modify users with same or higher role', 403);
+                    if (userRoleLevel <= targetRoleLevel && targetUser._id.toString() !== req.user._id.toString()) {
+                        throw new AppError(403, 'Cannot modify users with same or higher role level');
                     }
                 }
 
@@ -173,12 +164,12 @@ const hasPermission = (permissionName) => {
         async (req, res, next) => {
             try {
                 if (!req.user) {
-                    throw new AppError('Unauthorized', 401);
+                    throw new AppError(401, 'Unauthorized');
                 }
 
                 const hasPermission = await RBACService.hasPermission(req.user, permissionName);
                 if (!hasPermission) {
-                    throw new AppError('Insufficient permissions', 403);
+                    throw new AppError(403, 'Insufficient permissions');
                 }
 
                 next();
@@ -195,7 +186,7 @@ const checkProjectAccess = async (req, res, next) => {
         const projectId = req.params.id || req.body.projectId;
         
         if (!projectId) {
-            throw new AppError('Project ID is required', 400);
+            throw new AppError(400, 'Project ID is required');
         }
 
         const project = await Project.findById(projectId);
@@ -258,9 +249,9 @@ const loginAuth = async (req, res, next) => {
 };
 
 // Predefined role-based middleware
-const adminAuth = authorize(['admin', 'superadmin']);
-const teamLeadAuth = authorize(['teamlead']);
-const superadminAuth = authorize(['superadmin']);
+const adminAuth = authorize(70);
+const teamLeadAuth = authorize(50);
+const superadminAuth = authorize(90);
 
 const refreshToken = async (req, res) => {
    try {
@@ -339,7 +330,7 @@ const requireRoles = (...roles) => {
 // Admin authorization middleware
 const isAdmin = async (req, res, next) => {
     try {
-        if (!req.userRole || req.userRole.level < 70) {
+        if (!req.user.role || req.user.role.level < 70) {
             throw new ApiError(403, 'Admin access required');
         }
         next();

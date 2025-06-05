@@ -1,4 +1,5 @@
 const Joi = require('joi');
+const mongoose = require('mongoose');
 
 exports.validateTask = (task) => {
   const schema = Joi.object({
@@ -129,4 +130,18 @@ exports.validateTimelineEvent = (event) => {
   });
 
   return schema.validate(event);
+};
+
+/**
+ * Validates if a string is a valid MongoDB ObjectId
+ * @param {string} id - The ID to validate
+ * @returns {boolean} - True if valid, false otherwise
+ */
+const validateObjectId = (id) => {
+    if (!id) return false;
+    return mongoose.Types.ObjectId.isValid(id);
+};
+
+module.exports = {
+    validateObjectId
 }; 
