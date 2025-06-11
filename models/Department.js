@@ -14,7 +14,7 @@ const departmentSchema = new mongoose.Schema({
     head: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
-        required: true
+        required: false
     },
     parentDepartment: {
         type: mongoose.Schema.Types.ObjectId,
@@ -23,7 +23,7 @@ const departmentSchema = new mongoose.Schema({
     budget: {
         allocated: {
             type: Number,
-            required: true
+            
         },
         spent: {
             type: Number,
@@ -65,7 +65,6 @@ const departmentSchema = new mongoose.Schema({
 });
 
 // Indexes
-departmentSchema.index({ name: 'text' });
 departmentSchema.index({ head: 1 });
 departmentSchema.index({ parentDepartment: 1 });
 departmentSchema.index({ status: 1 });
@@ -112,6 +111,12 @@ departmentSchema.methods.updateBudget = async function(amount, type = 'spent') {
         this.budget.allocated = amount;
     }
     await this.save();
+};
+
+departmentSchema.methods.updateHead = async function(userId) {
+    this.head = userId;
+    await this.save();
+    return this;
 };
 
 const Department = mongoose.model('Department', departmentSchema);

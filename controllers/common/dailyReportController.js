@@ -6,13 +6,13 @@ const { createNotification } = require('../../utils/notification');
 const dailyReportController = {
     async submitDailyReports(req, res) {
         try {
-            const { reports } = req.body;
+            const { tasks, hours, projectId } = req.body;
             const userId = req.user._id;
 
-            if (!Array.isArray(reports) || reports.length === 0) {
+            if (!tasks || !hours) {
                 return res.status(400).json({
                     success: false,
-                    message: 'Reports array is required'
+                    message: 'Tasks and hours are required'
                 });
             }
 
@@ -20,54 +20,45 @@ const dailyReportController = {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
 
-            // Create daily report entries
-            const dailyReports = reports.map(report => ({
+            // Create the report
+            const report = new DailyReport({
                 user: userId,
                 date: today,
-                content: report.content,
-                project: report.projectId,
-                submissionTime: new Date(),
-                status: 'submitted'
-            }));
+                tasks,
+                hours,
+                project: projectId,
+                submissionTime: new Date()
+            });
 
-            // Save all reports
-            const savedReports = await DailyReport.insertMany(dailyReports);
+            // Save the report
+            await report.save();
 
-            // If any reports are associated with projects, notify project heads
-            const projectReports = savedReports.filter(report => report.project);
-            if (projectReports.length > 0) {
-                const projects = await Project.find({
-                    _id: { $in: projectReports.map(r => r.project) }
-                }).populate('projectHead', '_id name');
-
-                const user = await User.findById(userId).select('name');
-
-                // Send notifications to project heads
-                for (const project of projects) {
-                    if (project.projectHead && project.projectHead._id.toString() !== userId.toString()) {
-                        await createNotification({
-                            userId: project.projectHead._id,
+            // If project exists, notify project head
+            if (projectId) {
+                const project = await Project.findById(projectId);
+                if (project && project.projectHead.toString() !== userId.toString()) {
+                    await createNotification({
+                        userId: project.projectHead,
+                        type: 'daily_report',
+                        message: `New daily report submitted for project ${project.name}`,
+                        reference: {
                             type: 'daily_report',
-                            message: `${user.name} submitted a daily report for project ${project.name}`,
-                            reference: {
-                                type: 'project',
-                                id: project._id
-                            }
-                        });
-                    }
+                            id: report._id
+                        }
+                    });
                 }
             }
 
             res.status(201).json({
                 success: true,
-                message: 'Daily reports submitted successfully',
-                data: savedReports
+                message: 'Daily report submitted successfully',
+                data: report
             });
         } catch (error) {
             console.error('Error in submitDailyReports:', error);
             res.status(500).json({
                 success: false,
-                message: 'Failed to submit daily reports',
+                message: 'Failed to submit daily report',
                 error: error.message
             });
         }
@@ -75,38 +66,29 @@ const dailyReportController = {
 
     async getDailyReports(req, res) {
         try {
-            const { projectId, startDate, endDate, userId } = req.query;
-            const query = {};
+            const { startDate, endDate, projectId } = req.query;
+            const userId = req.user._id;
+            const query = { user: userId };
 
-            // If specific user's reports are requested and user has permission
-            const targetUserId = userId || req.user._id;
-            if (req.user.role !== 'admin' && req.user.role !== 'manager' && targetUserId !== req.user._id) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Not authorized to view other users\' reports'
-                });
-            }
-
-            // Build query
-            query.user = targetUserId;
-            if (projectId) query.project = projectId;
+            // Add date range to query if provided
             if (startDate || endDate) {
                 query.date = {};
                 if (startDate) query.date.$gte = new Date(startDate);
                 if (endDate) query.date.$lte = new Date(endDate);
             }
 
+            // Add project filter if provided
+            if (projectId) {
+                query.project = projectId;
+            }
+
             const reports = await DailyReport.find(query)
-                .populate('user', 'name')
-                .populate('project', 'name description')
+                .populate('project', 'name')
                 .sort({ date: -1, submissionTime: -1 });
 
             res.json({
                 success: true,
-                data: {
-                    reports,
-                    user: reports[0]?.user || { _id: targetUserId }
-                }
+                data: reports
             });
         } catch (error) {
             console.error('Error in getDailyReports:', error);
@@ -121,7 +103,7 @@ const dailyReportController = {
     async updateDailyReport(req, res) {
         try {
             const { reportId } = req.params;
-            const { content } = req.body;
+            const { tasks, hours } = req.body;
             const userId = req.user._id;
 
             const report = await DailyReport.findOne({ _id: reportId, user: userId });
@@ -141,7 +123,8 @@ const dailyReportController = {
                 });
             }
 
-            report.content = content;
+            report.tasks = tasks;
+            report.hours = hours;
             await report.save();
 
             res.json({

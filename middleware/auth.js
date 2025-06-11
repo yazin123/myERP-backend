@@ -73,33 +73,43 @@ const verifyToken = async (token, secret) => {
 };
 
 // Authentication middleware
-const auth = async (req, res, next) => {
+const authenticate = async (req, res, next) => {
     try {
+        // Get token from header
         const token = req.header('Authorization')?.replace('Bearer ', '');
-        
         if (!token) {
-            throw new ApiError(401, 'Authentication required');
+            throw new AppError(401, 'No authentication token provided');
         }
 
+        // Verify token
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const user = await User.findById(decoded.userId).populate('role');
+        
+        // Get user from database and populate role
+        const user = await User.findById(decoded.userId)
+            .populate({
+                path: 'role',
+                select: 'name level permissions isSystem canManageRoles'
+            });
 
         if (!user) {
-            throw new ApiError(401, 'User not found');
+            throw new AppError(401, 'User not found');
         }
 
-        if (user.status !== 'active') {
-            throw new ApiError(401, 'Account is not active');
-        }
-
-        // Set both the decoded token and the full user object
+        // Add user and permissions to request
         req.user = user;
-        req.token = decoded;
+        req.user.permissions = decoded.permissions || [];
+        
+        // If superadmin, grant all permissions
+        if (user.role.name === 'superadmin') {
+            req.user.permissions = ['*'];
+        }
+
         next();
     } catch (error) {
-        logger.error('Authentication error:', error);
-        if (error instanceof jwt.JsonWebTokenError) {
-            next(new ApiError(401, 'Invalid token'));
+        if (error.name === 'JsonWebTokenError') {
+            next(new AppError(401, 'Invalid authentication token'));
+        } else if (error.name === 'TokenExpiredError') {
+            next(new AppError(401, 'Authentication token expired'));
         } else {
             next(error);
         }
@@ -109,7 +119,7 @@ const auth = async (req, res, next) => {
 // Role-based authorization middleware
 const authorize = (requiredLevel = 0, options = {}) => {
     return [
-        auth,
+        authenticate,
         async (req, res, next) => {
             try {
                 if (!req.user) {
@@ -157,27 +167,30 @@ const authorize = (requiredLevel = 0, options = {}) => {
     ];
 };
 
-// Permission-based authorization middleware
-const hasPermission = (permissionName) => {
-    return [
-        auth,
-        async (req, res, next) => {
-            try {
-                if (!req.user) {
-                    throw new AppError(401, 'Unauthorized');
-                }
-
-                const hasPermission = await RBACService.hasPermission(req.user, permissionName);
-                if (!hasPermission) {
-                    throw new AppError(403, 'Insufficient permissions');
-                }
-
-                next();
-            } catch (error) {
-                next(error);
+// Permission check middleware
+const checkPermission = (permissionName) => {
+    return async (req, res, next) => {
+        try {
+            if (!req.user) {
+                throw new AppError(401, 'Unauthorized');
             }
+
+            // Superadmin has all permissions
+            if (req.user.role.name === 'superadmin' || req.user.permissions.includes('*')) {
+                return next();
+            }
+
+            // Check if user has the required permission
+            if (!req.user.permissions.includes(permissionName)) {
+                logger.warn(`User ${req.user._id} denied access to ${permissionName}`);
+                throw new AppError(403, 'Insufficient permissions');
+            }
+
+            next();
+        } catch (error) {
+            next(error);
         }
-    ];
+    };
 };
 
 // Project access middleware
@@ -342,8 +355,7 @@ const isAdmin = async (req, res, next) => {
 module.exports = {
    loginLimiter,
    apiLimiter, 
-   auth,
-   authenticate : auth,
+   authenticate,
    adminAuth,
    teamLeadAuth,
    superadminAuth,
@@ -355,7 +367,7 @@ module.exports = {
    blacklistToken,
    authorize,
    tokenBlacklist,
-   hasPermission,
+   checkPermission,
    requireRoles,
    isAdmin
 };

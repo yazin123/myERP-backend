@@ -77,7 +77,13 @@ router.post('/login', userController.login);
 
 // Protected routes - require admin access
 router.get('/current', authenticate, userController.getCurrentUser);
+
+// User metrics
+router.get('/metrics', authenticate, userController.getUserMetrics);
+
+// Get all users (protected, admin only)
 router.get('/', authenticate, authorize(['admin', 'superadmin']), userController.getAllUsers);
+
 router.get('/managers', adminAuth, userController.getManagers);
 router.get('/:id', authenticate, authorize(['admin', 'superadmin']), userController.getUserById);
 router.put('/update/:id', 
@@ -113,9 +119,6 @@ router.put('/:id/change-password', authenticate, async (req, res, next) => {
         res.status(403).json({ message: 'Not authorized to change this user\'s password' });
     }
 }, userController.changePassword);
-
-// Get all users (protected, admin only)
-router.get('/', authenticate, authorize(['admin', 'superadmin']), userController.getUsers);
 
 module.exports = router;
 

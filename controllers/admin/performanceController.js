@@ -473,6 +473,102 @@ const performanceController = {
         error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
       });
     }
+  },
+
+  // Get employee performance
+  getEmployeePerformance: async (req, res) => {
+    try {
+      const { employeeId } = req.params;
+      const { startDate, endDate, departmentId } = req.query;
+
+      // Validate employee exists
+      const employee = await User.findById(employeeId);
+      if (!employee) {
+        return res.status(404).json({
+          success: false,
+          message: 'Employee not found'
+        });
+      }
+
+      // Build query
+      const query = {
+        userId: mongoose.Types.ObjectId(employeeId)
+      };
+
+      if (startDate && endDate) {
+        query.createdAt = {
+          $gte: new Date(startDate),
+          $lte: new Date(endDate)
+        };
+      }
+
+      if (departmentId) {
+        query.departmentId = mongoose.Types.ObjectId(departmentId);
+      }
+
+      // Get performance records
+      const performance = await Performance.find(query)
+        .populate('userId', 'name email department position')
+        .populate('taskId', 'title description')
+        .sort({ createdAt: -1 });
+
+      // Calculate summary stats
+      const stats = await Performance.aggregate([
+        {
+          $match: query
+        },
+        {
+          $group: {
+            _id: null,
+            totalPoints: { $sum: '$points' },
+            avgPoints: { $avg: '$points' },
+            totalRecords: { $sum: 1 },
+            categories: {
+              $push: {
+                category: '$category',
+                points: '$points'
+              }
+            }
+          }
+        }
+      ]);
+
+      // Transform performance records
+      const transformedPerformance = performance.map(record => {
+        const doc = record.toObject();
+        return {
+          ...doc,
+          score: Math.round(doc.points * 10), // Convert to percentage
+          date: doc.createdAt
+        };
+      });
+
+      res.json({
+        success: true,
+        data: {
+          employee: {
+            _id: employee._id,
+            name: employee.name,
+            email: employee.email,
+            department: employee.department,
+            position: employee.position
+          },
+          performance: transformedPerformance,
+          summary: stats[0] || {
+            totalPoints: 0,
+            avgPoints: 0,
+            totalRecords: 0
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error in getEmployeePerformance:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch employee performance',
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      });
+    }
   }
 };
 

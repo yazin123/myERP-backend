@@ -4,9 +4,9 @@ const { authenticate } = require('../../middleware/auth');
 const { checkPermission } = require('../../middleware/permission');
 
 // Import controllers
-const departmentController = require('../../controllers/departmentController');
-const designationController = require('../../controllers/designationController');
-const systemEnumController = require('../../controllers/systemEnumController');
+const departmentController = require('../../controllers/admin/departmentController');
+const designationController = require('../../controllers/admin/designationController');
+const systemEnumController = require('../../controllers/admin/systemEnumController');
 const rbacController = require('../../controllers/admin/rbacController');
 const userController = require('../../controllers/admin/userController');
 const dashboardController = require('../../controllers/admin/dashboardController');
@@ -15,6 +15,7 @@ const performanceController = require('../../controllers/admin/performanceContro
 // Department routes
 router.get('/departments',
     authenticate,
+    checkPermission('view_departments'),
     departmentController.getAllDepartments
 );
 
@@ -39,11 +40,13 @@ router.delete('/departments/:id',
 // Designation routes
 router.get('/designations',
     authenticate,
+    checkPermission('view_designations'),
     designationController.getAllDesignations
 );
 
 router.get('/departments/:departmentId/designations',
     authenticate,
+    checkPermission('view_designations'),
     designationController.getDesignationsByDepartment
 );
 

@@ -63,7 +63,6 @@ const systemEnumSchema = new mongoose.Schema({
 });
 
 // Add indexes
-systemEnumSchema.index({ name: 1 });
 systemEnumSchema.index({ module: 1, type: 1 });
 systemEnumSchema.index({ 'values.value': 1 });
 

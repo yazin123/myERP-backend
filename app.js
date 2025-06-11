@@ -1,3 +1,8 @@
+/**
+ * Main application file for the Nesa ERP Backend
+ * Sets up Express server with all middleware and route configurations
+ */
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -18,10 +23,19 @@ const monitoring = require('./utils/monitoring');
 const mongoose = require('mongoose');
 const { ApiError } = require('./utils/errors');
 const NotificationServer = require('./websocket/notificationServer');
+const { authenticate } = require('./middleware/auth');
 
+// Initialize express app
 const app = express();
 
-// Security middleware
+/**
+ * Security Middleware Configuration
+ * - Helmet: Secure HTTP headers
+ * - CORS: Cross-Origin Resource Sharing
+ * - Express Sanitizer: Prevent XSS
+ * - Mongo Sanitize: Prevent NoSQL Injection
+ * - HPP: HTTP Parameter Pollution
+ */
 app.use(helmet({
     contentSecurityPolicy: {
         directives: {
@@ -37,7 +51,7 @@ app.use(helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
 
-// CORS configuration
+// CORS Configuration
 app.use(cors({
     origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3000'],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
@@ -45,7 +59,12 @@ app.use(cors({
     exposedHeaders: ['Content-Length', 'Authorization']
 }));
 
-// Request parsing and sanitization
+/**
+ * Request Parsing and Protection Middleware
+ * - JSON body parser with size limit
+ * - URL-encoded parser
+ * - Sanitization middleware
+ */
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 app.use(expressSanitizer());
@@ -53,24 +72,33 @@ app.use(mongoSanitize());
 app.use(xss());
 app.use(hpp());
 
-// Compression
+/**
+ * Performance Middleware
+ * - Compression: Compress response bodies
+ * - Morgan: HTTP request logging
+ * - Timeout: Request timeout handling
+ */
 app.use(compression());
-
-// Monitoring middleware
-app.use(monitoring.monitorRequest);
-
-// Logging
-if (process.env.NODE_ENV === 'development') {
-    app.use(morgan('dev', { stream: logger.stream }));
-} else {
-    app.use(morgan('combined', { stream: logger.stream }));
-}
-
-// Timeout
+app.use(morgan(process.env.NODE_ENV === 'development' ? 'dev' : 'combined', { stream: logger.stream }));
 app.use(timeout('30s'));
 app.use((req, res, next) => {
     if (!req.timedout) next();
 });
+
+// Import route modules
+const authRoutes = require('./routes/auth/authRoutes');
+const adminRoutes = require('./routes/admin');
+const commonRoutes = require('./routes/common');
+const v1Routes = require('./routes/v1');
+
+// Apply rate limiting to all API routes
+app.use('/api', dynamicRateLimit);
+
+// Mount routes
+app.use('/api/auth', authRoutes);
+app.use('/api/admin', authenticate, adminRoutes);
+app.use('/api', commonRoutes);
+app.use('/api/v1', v1Routes);
 
 // Static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -81,63 +109,10 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
     customSiteTitle: 'Nesa ERP API Documentation'
 }));
 
-// Import routes
-const routes = {
-    common: {
-        timeline: require('./routes/common/timelineEventRoutes'),
-        tasks: require('./routes/common/taskRoutes'),
-        users: require('./routes/common/userRoutes'),
-        projects: require('./routes/common/projectRoutes'),
-        notifications: require('./routes/common/notificationRoutes'),
-        system: require('./routes/common/systemRoutes'),
-        dashboard: require('./routes/common/dashboardRoutes'),
-        dailyReports: require('./routes/common/dailyReportRoutes'),
-        projectTasks: require('./routes/common/projectTaskRoutes'),
-        calendar: require('./routes/common/calendarRoutes')
-    },
-    admin: {
-        users: require('./routes/admin/userRoutes'),
-        projects: require('./routes/admin/projectRoutes'),
-        tasks: require('./routes/admin/taskRoutes'),
-        monitoring: require('./routes/admin/monitoringRoutes'),
-        performance: require('./routes/admin/performanceRoutes'),
-        rbac: require('./routes/admin/rbacRoutes'),
-        dashboard: require('./routes/admin/dashboardRoutes'),
-        departments: require('./routes/admin/departmentRoutes'),
-        designations: require('./routes/admin/designationRoutes')
-    }
-};
-
-// Apply rate limiting to all API routes
-app.use('/api', dynamicRateLimit);
-
-// Mount API routes - v1
-const API_V1_PREFIX = '/api/v1';
-
-// Common routes
-app.use(`${API_V1_PREFIX}/timeline`, routes.common.timeline);
-app.use(`${API_V1_PREFIX}/projects`, routes.common.projects);
-app.use(`${API_V1_PREFIX}/tasks`, routes.common.tasks);
-app.use(`${API_V1_PREFIX}/users`, routes.common.users);
-app.use(`${API_V1_PREFIX}/notifications`, routes.common.notifications);
-app.use(`${API_V1_PREFIX}/system`, routes.common.system);
-app.use(`${API_V1_PREFIX}/dashboard`, routes.common.dashboard);
-app.use(`${API_V1_PREFIX}/daily-reports`, routes.common.dailyReports);
-app.use(`${API_V1_PREFIX}/project-tasks`, routes.common.projectTasks);
-app.use(`${API_V1_PREFIX}/calendar`, routes.common.calendar);
-
-// Admin routes
-app.use(`${API_V1_PREFIX}/admin/users`, routes.admin.users);
-app.use(`${API_V1_PREFIX}/admin/projects`, routes.admin.projects);
-app.use(`${API_V1_PREFIX}/admin/tasks`, routes.admin.tasks);
-app.use(`${API_V1_PREFIX}/admin/monitoring`, routes.admin.monitoring);
-app.use(`${API_V1_PREFIX}/admin/performance`, routes.admin.performance);
-app.use(`${API_V1_PREFIX}/admin/dashboard`, routes.admin.dashboard);
-app.use(`${API_V1_PREFIX}/admin/departments`, routes.admin.departments);
-app.use(`${API_V1_PREFIX}/admin/designations`, routes.admin.designations);
-app.use(`${API_V1_PREFIX}/admin`, routes.admin.rbac);
-
-// Health check endpoint
+/**
+ * Health Check Endpoint
+ * Used for monitoring system health and uptime
+ */
 app.get('/health', async (req, res) => {
     try {
         const health = await monitoring.getSystemHealth();
@@ -157,9 +132,7 @@ app.get('/', (req, res) => {
 });
 
 // 404 handler
-app.use((req, res, next) => {
-    next(new ApiError(404, `Route ${req.originalUrl} not found`));
-});
+app.use(notFound);
 
 // Error handling
 app.use(errorHandler);
@@ -170,7 +143,10 @@ const server = require('http').createServer(app);
 // Initialize WebSocket server
 const notificationServer = new NotificationServer();
 
-// Handle WebSocket upgrade
+/**
+ * WebSocket upgrade handler
+ * Only allows upgrades for notification endpoints
+ */
 server.on('upgrade', (request, socket, head) => {
     if (request.url.startsWith('/notifications')) {
         notificationServer.handleUpgrade(request, socket, head);
@@ -179,7 +155,6 @@ server.on('upgrade', (request, socket, head) => {
     }
 });
 
-// Export both app and notification server
 module.exports = {
     app,
     server,

@@ -1,124 +1,69 @@
 const multer = require('multer');
 const path = require('path');
-const crypto = require('crypto');
-const { AppError } = require('./errorHandler');
+const fs = require('fs');
+const { ApiError } = require('../utils/errors');
 
-// Configure storage
+// Create uploads directory if it doesn't exist
+const createUploadDir = (dirPath) => {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
+};
+
+// Configure multer storage
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, path.join(__dirname, '../uploads'));
-    },
-    filename: (req, file, cb) => {
-        // Generate unique filename
-        crypto.randomBytes(16, (err, raw) => {
-            if (err) return cb(err);
-
-            const filename = raw.toString('hex') + path.extname(file.originalname);
-            cb(null, filename);
-        });
+  destination: (req, file, cb) => {
+    let uploadPath = '';
+    
+    switch (file.fieldname) {
+      case 'photo':
+        uploadPath = path.join(__dirname, '../uploads/photos');
+        break;
+      case 'resume':
+        uploadPath = path.join(__dirname, '../uploads/resumes');
+        break;
+      case 'document':
+        uploadPath = path.join(__dirname, '../uploads/documents');
+        break;
+      default:
+        uploadPath = path.join(__dirname, '../uploads/others');
     }
+    
+    createUploadDir(uploadPath);
+    cb(null, uploadPath);
+  },
+  filename: (req, file, cb) => {
+    // Create unique filename with original extension
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+  }
 });
 
 // File filter
 const fileFilter = (req, file, cb) => {
-    // Allowed file types
-    const allowedTypes = [
-        'image/jpeg',
-        'image/png',
-        'image/gif',
-        'application/pdf',
-        'application/msword',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'application/vnd.ms-excel',
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'text/plain',
-        'text/csv'
-    ];
+  const allowedTypes = {
+    photo: ['image/jpeg', 'image/png', 'image/jpg'],
+    resume: ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+    document: ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain'],
+  };
 
-    if (allowedTypes.includes(file.mimetype)) {
-        cb(null, true);
-    } else {
-        cb(new AppError(400, 'Invalid file type. Only images, PDFs, Office documents, and text files are allowed.'));
-    }
+  const allowed = allowedTypes[file.fieldname] || ['application/pdf', 'image/jpeg', 'image/png'];
+  
+  if (allowed.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new ApiError('Invalid file type', 400), false);
+  }
 };
 
 // Configure multer
 const upload = multer({
-    storage: storage,
-    fileFilter: fileFilter,
-    limits: {
-        fileSize: 10 * 1024 * 1024, // 10MB limit
-        files: 5 // Maximum 5 files per request
-    }
+  storage: storage,
+  fileFilter: fileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB
+    files: 5 // Max 5 files at once
+  }
 });
 
-// Middleware for handling file upload errors
-const handleFileUploadError = (err, req, res, next) => {
-    if (err instanceof multer.MulterError) {
-        if (err.code === 'LIMIT_FILE_SIZE') {
-            return next(new AppError(400, 'File too large. Maximum size is 10MB.'));
-        }
-        if (err.code === 'LIMIT_FILE_COUNT') {
-            return next(new AppError(400, 'Too many files. Maximum is 5 files per request.'));
-        }
-        return next(new AppError(400, 'File upload error: ' + err.message));
-    }
-    next(err);
-};
-
-// Middleware for single file upload
-const uploadSingle = (fieldName) => {
-    return [
-        upload.single(fieldName),
-        handleFileUploadError
-    ];
-};
-
-// Middleware for multiple files upload
-const uploadMultiple = (fieldName, maxCount = 5) => {
-    return [
-        upload.array(fieldName, maxCount),
-        handleFileUploadError
-    ];
-};
-
-// Middleware for multiple fields upload
-const uploadFields = (fields) => {
-    return [
-        upload.fields(fields),
-        handleFileUploadError
-    ];
-};
-
-// Clean up uploaded files in case of error
-const cleanupOnError = async (req, res, next) => {
-    const fs = require('fs').promises;
-    
-    if (!res.headersSent && req.file) {
-        try {
-            await fs.unlink(req.file.path);
-        } catch (error) {
-            console.error('Error cleaning up file:', error);
-        }
-    }
-    
-    if (!res.headersSent && req.files) {
-        const files = Array.isArray(req.files) ? req.files : Object.values(req.files).flat();
-        for (const file of files) {
-            try {
-                await fs.unlink(file.path);
-            } catch (error) {
-                console.error('Error cleaning up file:', error);
-            }
-        }
-    }
-    
-    next();
-};
-
-module.exports = {
-    uploadSingle,
-    uploadMultiple,
-    uploadFields,
-    cleanupOnError
-}; 
+module.exports = upload; 

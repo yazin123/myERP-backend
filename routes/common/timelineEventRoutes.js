@@ -1,24 +1,24 @@
 const express = require('express');
 const router = express.Router();
-const { auth, requireRoles } = require('../../middleware/auth');
+const { authenticate, requireRoles } = require('../../middleware/auth');
 const timelineEventController = require('../../controllers/common/timelineEventController');
 
 // Get all timeline events
-router.get('/', auth, timelineEventController.getTimelineEvents);
+router.get('/', authenticate, timelineEventController.getTimelineEvents);
 
 // Get project timeline events (must come before /:eventId)
-router.get('/project/:projectId', auth, timelineEventController.getProjectTimelineEvents);
+router.get('/project/:projectId', authenticate, timelineEventController.getProjectTimelineEvents);
 
 // Get timeline event by ID
-router.get('/:eventId', auth, timelineEventController.getTimelineEventById);
+router.get('/:eventId', authenticate, timelineEventController.getTimelineEventById);
 
 // Create timeline event
-router.post('/', auth, timelineEventController.createTimelineEvent);
+router.post('/', authenticate, timelineEventController.createTimelineEvent);
 
 // Update timeline event
-router.put('/:eventId', auth, timelineEventController.updateTimelineEvent);
+router.put('/:eventId', authenticate, timelineEventController.updateTimelineEvent);
 
 // Delete timeline event
-router.delete('/:eventId', auth, timelineEventController.deleteTimelineEvent);
+router.delete('/:eventId', authenticate, timelineEventController.deleteTimelineEvent);
 
 module.exports = router; 

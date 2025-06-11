@@ -76,7 +76,6 @@ const customEnumSchema = new mongoose.Schema({
 
 // Compound index for module and type
 customEnumSchema.index({ module: 1, type: 1 });
-customEnumSchema.index({ name: 1 }, { unique: true });
 
 const CustomEnum = mongoose.model('CustomEnum', customEnumSchema);
 

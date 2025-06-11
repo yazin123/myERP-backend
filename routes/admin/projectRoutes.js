@@ -78,6 +78,7 @@ const handleMulterError = (err, req, res, next) => {
 
 // Routes
 router.get('/stats', projectController.getProjectStats);
+router.get('/metrics', authenticate, projectController.getProjectMetrics);
 router.get('/', projectController.getAllProjects);
 router.get('/filter', authenticate, projectController.getProjects);
 router.get('/assigned', authenticate, projectController.getAssignedProjects);

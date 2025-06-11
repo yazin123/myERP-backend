@@ -3,6 +3,7 @@ const Designation = require('../../models/Designation');
 const logger = require('../../utils/logger');
 const { validateObjectId } = require('../../utils/validation');
 const { AppError } = require('../../middleware/errorHandler');
+const User = require('../../models/User');
 
 const departmentController = {
     // Get all departments
@@ -28,7 +29,7 @@ const departmentController = {
     // Create new department
     createDepartment: async (req, res, next) => {
         try {
-            const { name, code, description } = req.body;
+            const { name, code, description, head } = req.body;
 
             // Check if department with same code exists
             const existingDepartment = await Department.findOne({ code });
@@ -40,6 +41,7 @@ const departmentController = {
                 name,
                 code,
                 description,
+                head: head || null, // Make head optional
                 createdBy: req.user._id
             });
 
@@ -168,6 +170,45 @@ const departmentController = {
         } catch (error) {
             logger.error('Get department by ID error:', error);
             next(new AppError(500, 'Failed to fetch department'));
+        }
+    },
+
+    // Add new method to update department head
+    updateDepartmentHead: async (req, res, next) => {
+        try {
+            const { departmentId } = req.params;
+            const { head } = req.body;
+
+            if (!validateObjectId(departmentId)) {
+                return next(new AppError(400, 'Invalid department ID'));
+            }
+
+            if (!validateObjectId(head)) {
+                return next(new AppError(400, 'Invalid user ID for department head'));
+            }
+
+            const department = await Department.findById(departmentId);
+            if (!department) {
+                return next(new AppError(404, 'Department not found'));
+            }
+
+            // Check if the user exists and is valid
+            const user = await User.findById(head);
+            if (!user) {
+                return next(new AppError(404, 'User not found'));
+            }
+
+            await department.updateHead(head);
+            
+            res.status(200).json({
+                success: true,
+                data: {
+                    department: department
+                }
+            });
+        } catch (error) {
+            logger.error('Update department head error:', error);
+            next(new AppError(500, 'Failed to update department head'));
         }
     }
 };

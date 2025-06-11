@@ -1548,6 +1548,105 @@ const projectController = {
                 error: error.message
             });
         }
+    },
+
+    async getProjectMetrics(req, res) {
+        try {
+            const { timeframe } = req.query;
+            let dateFilter = {};
+            
+            // Calculate date range based on timeframe
+            const now = new Date();
+            if (timeframe === 'week') {
+                dateFilter = {
+                    createdAt: {
+                        $gte: new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7),
+                        $lte: now
+                    }
+                };
+            } else if (timeframe === 'month') {
+                dateFilter = {
+                    createdAt: {
+                        $gte: new Date(now.getFullYear(), now.getMonth() - 1, now.getDate()),
+                        $lte: now
+                    }
+                };
+            } else if (timeframe === 'year') {
+                dateFilter = {
+                    createdAt: {
+                        $gte: new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()),
+                        $lte: now
+                    }
+                };
+            }
+
+            // Get project metrics
+            const [
+                totalProjects,
+                activeProjects,
+                completedProjects,
+                projectsByStatus,
+                projectsByPriority,
+                projectsByDepartment,
+                recentProjects
+            ] = await Promise.all([
+                Project.countDocuments(dateFilter),
+                Project.countDocuments({ ...dateFilter, status: 'active' }),
+                Project.countDocuments({ ...dateFilter, status: 'completed' }),
+                Project.aggregate([
+                    { $match: dateFilter },
+                    { $group: { _id: '$status', count: { $sum: 1 } } }
+                ]),
+                Project.aggregate([
+                    { $match: dateFilter },
+                    { $group: { _id: '$priority', count: { $sum: 1 } } }
+                ]),
+                Project.aggregate([
+                    { $match: dateFilter },
+                    { $group: { _id: '$department', count: { $sum: 1 } } },
+                    { $lookup: {
+                        from: 'departments',
+                        localField: '_id',
+                        foreignField: '_id',
+                        as: 'departmentInfo'
+                    }},
+                    { $project: {
+                        _id: 1,
+                        count: 1,
+                        departmentName: { $arrayElemAt: ['$departmentInfo.name', 0] }
+                    }}
+                ]),
+                Project.find(dateFilter)
+                    .sort({ createdAt: -1 })
+                    .limit(5)
+                    .populate('manager', 'name')
+                    .select('name status priority startDate endDate progress')
+            ]);
+
+            res.json({
+                success: true,
+                data: {
+                    overview: {
+                        total: totalProjects,
+                        active: activeProjects,
+                        completed: completedProjects
+                    },
+                    distribution: {
+                        byStatus: projectsByStatus,
+                        byPriority: projectsByPriority,
+                        byDepartment: projectsByDepartment
+                    },
+                    recentProjects
+                }
+            });
+        } catch (error) {
+            console.error('Error in getProjectMetrics:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to fetch project metrics',
+                error: error.message
+            });
+        }
     }
 };
 

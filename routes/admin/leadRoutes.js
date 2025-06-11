@@ -1,44 +1,45 @@
 // routes/leadRoutes.js
 const express = require('express');
 const router = express.Router();
-const multer = require('multer');
-const { loginAuth, checkAccess, apiLimiter } = require('../../middleware/auth');
+const { authenticate, checkAccess, apiLimiter } = require('../../middleware/auth');
 const leadController = require('../../controllers/admin/leadController');
+const upload = require('../../middleware/upload');
 
-// Multer configuration for file uploads
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, 'uploads/leads');
-    },
-    filename: (req, file, cb) => {
-        cb(null, Date.now() + '-' + file.originalname);
-    }
-});
+// Get all leads
+router.get('', authenticate, leadController.getLeads);
 
-const upload = multer({ storage });
+// Get all leads (admin)
+router.get('/all', authenticate, leadController.getAllLeads);
 
-// Lead routes with authentication and authorization
-router.get('', loginAuth, leadController.getLeads);
-router.get('/all', loginAuth, leadController.getAllLeads);
-router.get('/dashboard', loginAuth, leadController.getLeadsDashboard);
-router.get('/:id', loginAuth, leadController.getLeadById);
-router.get('/owner/:id', loginAuth, leadController.getLeadsByLeadOwner);
-router.post('', loginAuth, upload.fields([
-    { name: 'photo', maxCount: 1 },
-    { name: 'companyPhoto', maxCount: 1 }
+// Get leads dashboard
+router.get('/dashboard', authenticate, leadController.getLeadsDashboard);
+
+// Get lead by ID
+router.get('/:id', authenticate, leadController.getLeadById);
+
+// Get leads by lead owner
+router.get('/owner/:id', authenticate, leadController.getLeadsByLeadOwner);
+
+// Create new lead
+router.post('', authenticate, upload.fields([
+    { name: 'documents', maxCount: 5 }
 ]), leadController.createLead);
-router.put('/:id', loginAuth,apiLimiter, checkAccess, upload.fields([
-    { name: 'photo', maxCount: 1 },
-    { name: 'companyPhoto', maxCount: 1 }
+
+// Update lead
+router.put('/:id', authenticate, apiLimiter, checkAccess, upload.fields([
+    { name: 'documents', maxCount: 5 }
 ]), leadController.updateLead);
-router.patch('/:id/status', loginAuth, checkAccess, leadController.updateStatusLead);
-router.post('/:id/access/:userid', loginAuth, checkAccess, leadController.giveAccessToUser);
 
-// Followup routes
-router.get('/:id/followups', loginAuth, leadController.getfollowupsByLeadId);
-router.post('/:id/followups', loginAuth, checkAccess, upload.array('files'), leadController.addFollowUps);
-router.put('/followups/:id', loginAuth, checkAccess, upload.array('files'), leadController.updateFollowUps);
-router.patch('/followups/:id/status', loginAuth, checkAccess, leadController.updateFollowUpsStatus);
+// Update lead status
+router.patch('/:id/status', authenticate, checkAccess, leadController.updateStatusLead);
 
+// Give access to user
+router.post('/:id/access/:userid', authenticate, checkAccess, leadController.giveAccessToUser);
+
+// Follow-ups
+router.get('/:id/followups', authenticate, leadController.getfollowupsByLeadId);
+router.post('/:id/followups', authenticate, checkAccess, upload.array('files'), leadController.addFollowUps);
+router.put('/followups/:id', authenticate, checkAccess, upload.array('files'), leadController.updateFollowUps);
+router.patch('/followups/:id/status', authenticate, checkAccess, leadController.updateFollowUpsStatus);
 
 module.exports = router;

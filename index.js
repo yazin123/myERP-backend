@@ -1,3 +1,8 @@
+/**
+ * Entry point for the Nesa ERP Backend Application
+ * Handles database connection, server initialization, and process management
+ */
+
 require('dotenv').config();
 const mongoose = require('mongoose');
 const logger = require('./utils/logger');
@@ -5,9 +10,15 @@ const monitoring = require('./utils/monitoring');
 const setupCronJobs = require('./utils/cronJobs');
 const { app, server, notificationServer } = require('./app');
 
-// Database connection with monitoring
+/**
+ * MongoDB Connection Setup
+ * - Connects to MongoDB using environment variables
+ * - Configures connection options based on environment
+ * - Initializes monitoring metrics
+ */
 mongoose.connect(process.env.MONGODB_URI, {
-    autoIndex: process.env.NODE_ENV === 'development'
+    autoIndex: process.env.NODE_ENV === 'development',
+    // Additional MongoDB options can be added here
 })
 .then(() => {
     logger.info('Connected to MongoDB');
@@ -26,16 +37,23 @@ mongoose.connect(process.env.MONGODB_URI, {
     process.exit(1);
 });
 
-// Monitor database operations
+/**
+ * Database Error Monitoring
+ * Logs and tracks any database operation errors
+ */
 mongoose.connection.on('error', (error) => {
     logger.error('MongoDB error:', error);
     monitoring.incrementError('mongodb_error');
 });
 
-// Initialize cron jobs
+// Initialize scheduled tasks
 setupCronJobs();
 
-// Handle uncaught exceptions
+/**
+ * Process Error Handlers
+ * Handles uncaught exceptions and unhandled promise rejections
+ * Ensures graceful shutdown in case of errors
+ */
 process.on('uncaughtException', (error) => {
     logger.error('Uncaught Exception:', error);
     monitoring.incrementError('uncaught_exception');
@@ -43,7 +61,6 @@ process.on('uncaughtException', (error) => {
     server.close(() => process.exit(1));
 });
 
-// Handle unhandled promise rejections
 process.on('unhandledRejection', (err) => {
     logger.error('UNHANDLED REJECTION! 💥 Shutting down...', err);
     monitoring.incrementError('unhandled_rejection');
@@ -51,7 +68,11 @@ process.on('unhandledRejection', (err) => {
     server.close(() => process.exit(1));
 });
 
-// Graceful shutdown
+/**
+ * Graceful Shutdown Handler
+ * Properly closes database connections and server
+ * on SIGTERM signal
+ */
 process.on('SIGTERM', () => {
     logger.info('SIGTERM received. Shutting down gracefully...');
     server.close(() => {

@@ -2,13 +2,22 @@
 const mongoose = require('mongoose');
 const bcryptjs = require('bcryptjs');
 const crypto = require('crypto');
+const { hashPassword } = require('../utils/password');
 
+/**
+ * Resume Schema Definition
+ * Stores information about user's resume/CV
+ */
 const resumeSchema = new mongoose.Schema({
     filename: { type: String, required: true },
     fileUrl: { type: String, required: true },
     uploadDate: { type: Date, default: Date.now }
 });
 
+/**
+ * Attendance Schema Definition
+ * Tracks daily attendance records
+ */
 const attendanceSchema = new mongoose.Schema({
     date: { type: Date, required: true },
     checkIn: { type: Date },
@@ -22,6 +31,10 @@ const attendanceSchema = new mongoose.Schema({
     }
 });
 
+/**
+ * Performance Schema Definition
+ * Tracks employee performance metrics
+ */
 const performanceSchema = new mongoose.Schema({
     date: { type: Date, required: true },
     points: { type: Number, default: 0 },
@@ -32,80 +45,70 @@ const performanceSchema = new mongoose.Schema({
     description: String
 });
 
-// Bank details schema
+/**
+ * Bank Details Schema Definition
+ * Stores employee bank account information
+ */
 const bankDetailsSchema = new mongoose.Schema({
-    accountName: {
-        type: String,
-        trim: true,
-        default: null
-    },
-    accountNumber: {
-        type: String,
-        trim: true,
-        default: null
-    },
-    bankName: {
-        type: String,
-        trim: true,
-        default: null
-    },
-    branchCode: {
-        type: String,
-        trim: true,
-        default: null
-    },
-    ifscCode: {
-        type: String,
-        trim: true,
-        default: null
-    }
+    accountName: { type: String, trim: true },
+    accountNumber: { type: String, trim: true },
+    bankName: { type: String, trim: true },
+    branchCode: { type: String, trim: true },
+    ifscCode: { type: String, trim: true }
 }, { 
     _id: false,
-    strict: true,
-    toJSON: { getters: true },
-    toObject: { getters: true }
+    strict: true
 });
 
-// Emergency contact schema
+/**
+ * Emergency Contact Schema Definition
+ * Stores emergency contact information
+ */
 const emergencyContactSchema = new mongoose.Schema({
     name: String,
     relationship: String,
     phone: String
-});
+}, { _id: false });
 
+/**
+ * User Schema Definition
+ * Main schema for storing user/employee information
+ */
 const userSchema = new mongoose.Schema({
     // Authentication fields
     userId: {
         type: String,
         required: function() {
             return this.role === 'superadmin';
-        },
-        index: true
+        }
     },
     password: {
         type: String,
         required: function() {
             return this.role === 'superadmin';
-        }
+        },
+        select: false
     },
     role: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Role',
-        required: true
+        required: true,
+        index: true
     },
 
     // Personal Information
     name: {
         type: String,
         required: true,
-        trim: true
+        trim: true,
+        index: true
     },
     email: {
         type: String,
         required: true,
-        unique: true,
         trim: true,
         lowercase: true,
+        unique: true,
         match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please enter a valid email address']
     },
     phone: {
@@ -113,12 +116,8 @@ const userSchema = new mongoose.Schema({
         required: true,
         trim: true
     },
-    photo: {
-        type: String
-    },
-    dateOfBirth: {
-        type: Date
-    },
+    photo: String,
+    dateOfBirth: Date,
     gender: {
         type: String,
         enum: ['male', 'female', 'other']
@@ -132,24 +131,21 @@ const userSchema = new mongoose.Schema({
         enum: ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-']
     },
     address: String,
-    emergencyContact: {
-        name: String,
-        relationship: String,
-        phone: String
-    },
+    emergencyContact: emergencyContactSchema,
 
     // Employment Information
     employeeId: {
         type: String,
-        index: true,
         sparse: true
     },
     designation: {
-        type: String,
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Designation',
         required: true
     },
     department: {
-        type: String,
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Department',
         required: true
     },
     position: {
@@ -165,24 +161,7 @@ const userSchema = new mongoose.Schema({
         type: Number,
         min: 0
     },
-    bankDetails: {
-        type: mongoose.Schema.Types.Mixed,
-        validate: {
-            validator: function(value) {
-                if (!value) return true;
-                if (typeof value === 'string') {
-                    try {
-                        const parsed = JSON.parse(value);
-                        return parsed && typeof parsed === 'object';
-                    } catch (e) {
-                        return false;
-                    }
-                }
-                return typeof value === 'object';
-            },
-            message: 'Bank details must be a valid object or JSON string'
-        }
-    },
+    bankDetails: bankDetailsSchema,
     skills: [{
         type: String,
         trim: true
@@ -195,70 +174,40 @@ const userSchema = new mongoose.Schema({
         ssid: String,
         macAddress: String
     }],
-    status: {
-        type: String,
-        enum: ['active', 'inactive', 'on_leave', 'terminated'],
-        default: 'active'
-    },
-    type: {
-        type: String,
-        enum: ['employee', 'contractor', 'intern'],
-        default: 'employee'
-    },
 
     // System fields
-    loginDetails: {
-        lastLogin: Date,
-        loginCount: {
-            type: Number,
-            default: 0
-        }
+    isActive: {
+        type: Boolean,
+        default: true
     },
-    createdAt: {
-        type: Date,
-        default: Date.now
+    isEmailVerified: {
+        type: Boolean,
+        default: false
     },
-    updatedAt: {
-        type: Date,
-        default: Date.now
+    lastLogin: Date,
+    tokenVersion: {
+        type: Number,
+        default: 0
     },
-
-    // Employee-specific fields
-    resume: resumeSchema,
+    twoFactorSecret: {
+        type: String,
+        select: false
+    },
+    backupCodes: [{
+        code: String,
+        used: Boolean
+    }],
     attendance: [attendanceSchema],
     performance: [performanceSchema],
-    totalPoints: {
-        type: Number,
-        default: 0
-    },
-    projects: [{
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Project'
-    }],
-    tasks: [{
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Task'
-    }],
-
-    // New fields from the updated code
-    passwordChangedAt: Date,
-    passwordResetToken: String,
-    passwordResetExpires: Date,
-    loginAttempts: {
-        type: Number,
-        default: 0
-    },
-    lockUntil: Date
+    resume: resumeSchema
 }, {
     timestamps: true
 });
 
-// Indexes for better query performance
-userSchema.index({ designation: 1 });
-userSchema.index({ department: 1 });
-userSchema.index({ role: 1 });
-userSchema.index({ status: 1 });
+// Create compound indexes for better query performance
+userSchema.index({ department: 1, designation: 1 });
 userSchema.index({ 'attendance.date': 1 });
+userSchema.index({ isActive: 1, role: 1 });
 
 // Virtual for full name
 userSchema.virtual('fullName').get(function() {
@@ -308,8 +257,7 @@ userSchema.pre('save', async function(next) {
         // Hash password if modified
         if (this.isModified('password')) {
             console.log('Hashing password...');
-            const salt = await bcryptjs.genSalt(10);
-            this.password = await bcryptjs.hash(this.password, salt);
+            this.password = await hashPassword(this.password);
             console.log('Password hashed:', this.password);
             
             // Update passwordChangedAt when password is changed
@@ -480,6 +428,17 @@ userSchema.methods.getRoleLevel = async function() {
 userSchema.methods.compareRoleWith = async function(otherRole) {
     const RBACService = require('../services/rbacService');
     return await RBACService.compareRoles(this.role, otherRole);
+};
+
+// Instance methods
+userSchema.methods.toJSON = function() {
+    const user = this.toObject();
+    delete user.password;
+    delete user.tokenVersion;
+    delete user.twoFactorSecret;
+    delete user.tempTwoFactorSecret;
+    delete user.backupCodes;
+    return user;
 };
 
 module.exports = mongoose.model('User', userSchema);

@@ -2,15 +2,76 @@ const { validationResult, body, param, query } = require('express-validator');
 const { AppError } = require('./errorHandler');
 const Joi = require('joi');
 const logger = require('../utils/logger');
+const { ApiError } = require('../utils/errors');
 
 // Middleware to check validation results
-const validate = (req, res, next) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        const messages = errors.array().map(err => `${err.path}: ${err.msg}`);
-        throw new AppError(400, messages.join(', '));
+const validate = (validations) => {
+    // If validations is an array, it's express-validator chains
+    if (Array.isArray(validations)) {
+        return async (req, res, next) => {
+            try {
+                // Run all validations
+                await Promise.all(validations.map(validation => validation.run(req)));
+
+                // Check for validation errors
+                const errors = validationResult(req);
+                if (!errors.isEmpty()) {
+                    const messages = errors.array().map(err => `${err.path}: ${err.msg}`);
+                    return next(new AppError(400, messages.join(', ')));
+                }
+                next();
+            } catch (error) {
+                next(error);
+            }
+        };
     }
-    next();
+    
+    // If validations is an object, it's a Joi schema
+    if (validations && typeof validations.validate === 'function') {
+        return (req, res, next) => {
+            const validationOptions = {
+                abortEarly: false,
+                allowUnknown: true,
+                stripUnknown: true
+            };
+
+            const dataToValidate = {
+                body: req.body,
+                query: req.query,
+                params: req.params
+            };
+
+            try {
+                const { error, value } = validations.validate(dataToValidate, validationOptions);
+                
+                if (error) {
+                    const errorDetails = error.details.map(detail => ({
+                        message: detail.message,
+                        path: detail.path
+                    }));
+
+                    logger.warn('Validation error:', { 
+                        path: req.path, 
+                        errors: errorDetails 
+                    });
+
+                    throw new AppError('Validation Error', 400, errorDetails);
+                }
+
+                // Replace request data with validated data
+                req.body = value.body;
+                req.query = value.query;
+                req.params = value.params;
+
+                next();
+            } catch (err) {
+                next(err);
+            }
+        };
+    }
+
+    // If neither array nor Joi schema, return error
+    throw new Error('Invalid validation schema');
 };
 
 // Common validation rules
@@ -207,59 +268,27 @@ const validationChains = {
                 }
             }
         ]
+    },
+    auth: {
+        login: [
+            body('email').trim().isEmail().normalizeEmail().withMessage('Invalid email address'),
+            body('password').notEmpty().withMessage('Password is required')
+        ],
+        register: [
+            body('name').trim().isLength({ min: 2, max: 100 }).withMessage('Name must be between 2 and 100 characters'),
+            body('email').trim().isEmail().normalizeEmail().withMessage('Invalid email address'),
+            body('password')
+                .isLength({ min: 8, max: 30 })
+                .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/)
+                .withMessage('Password must contain at least one uppercase letter, one lowercase letter, one number and one special character')
+        ],
+        passwordReset: [
+            body('password')
+                .isLength({ min: 8, max: 30 })
+                .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/)
+                .withMessage('Password must contain at least one uppercase letter, one lowercase letter, one number and one special character')
+        ]
     }
-};
-
-/**
- * Middleware to validate request data against a Joi schema
- * @param {Object} schema - Joi validation schema
- * @returns {Function} Express middleware function
- */
-const validateRequest = (schema) => {
-    return (req, res, next) => {
-        if (!schema) {
-            return next();
-        }
-
-        const validationOptions = {
-            abortEarly: false, // Include all errors
-            allowUnknown: true, // Ignore unknown props
-            stripUnknown: true // Remove unknown props
-        };
-
-        const dataToValidate = {
-            body: req.body,
-            query: req.query,
-            params: req.params
-        };
-
-        try {
-            const { error, value } = schema.validate(dataToValidate, validationOptions);
-            
-            if (error) {
-                const errorDetails = error.details.map(detail => ({
-                    message: detail.message,
-                    path: detail.path
-                }));
-
-                logger.warn('Validation error:', { 
-                    path: req.path, 
-                    errors: errorDetails 
-                });
-
-                throw new AppError('Validation Error', 400, errorDetails);
-            }
-
-            // Replace request data with validated data
-            req.body = value.body;
-            req.query = value.query;
-            req.params = value.params;
-
-            next();
-        } catch (err) {
-            next(err);
-        }
-    };
 };
 
 // Common validation schemas
@@ -282,11 +311,81 @@ const commonSchemas = {
     })
 };
 
+// Auth validation chains
+const loginValidation = [
+    body('email')
+        .isEmail()
+        .withMessage('Please provide a valid email address'),
+    body('password')
+        .notEmpty()
+        .withMessage('Password is required'),
+    body('remember')
+        .optional()
+        .isBoolean()
+        .withMessage('Remember me must be a boolean value')
+];
+
+const registerValidation = [
+    body('name')
+        .trim()
+        .isLength({ min: 2, max: 50 })
+        .withMessage('Name must be between 2 and 50 characters'),
+    body('email')
+        .isEmail()
+        .withMessage('Please provide a valid email address'),
+    body('password')
+        .isLength({ min: 8 })
+        .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/)
+        .withMessage('Password must contain at least one uppercase letter, one lowercase letter, one number and one special character')
+];
+
+const passwordResetValidation = [
+    body('password')
+        .isLength({ min: 8 })
+        .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/)
+        .withMessage('Password must contain at least one uppercase letter, one lowercase letter, one number and one special character')
+];
+
+const changePasswordValidation = [
+    body('currentPassword')
+        .notEmpty()
+        .withMessage('Current password is required'),
+    body('newPassword')
+        .isLength({ min: 8 })
+        .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/)
+        .withMessage('Password must contain at least one uppercase letter, one lowercase letter, one number and one special character')
+];
+
+// Export validation middlewares
 module.exports = {
     validate,
     sanitize,
     commonValidations,
     validationChains,
-    validateRequest,
-    commonSchemas
+    validateRequest: validate,
+    commonSchemas,
+    validateLogin: validate(validationChains.auth.login),
+    validateRegister: validate(validationChains.auth.register),
+    validatePasswordReset: validate(validationChains.auth.passwordReset),
+    validateChangePassword: validate(changePasswordValidation),
+    validateProfileUpdate: validate([
+        body('name').optional().trim().isLength({ min: 2, max: 100 }).withMessage('Name must be between 2 and 100 characters'),
+        body('phone')
+            .optional()
+            .trim()
+            .matches(/^\+?[1-9]\d{1,14}$/)
+            .withMessage('Invalid phone number format'),
+        body('dateOfBirth').optional().isISO8601().toDate().withMessage('Invalid date format'),
+        body('gender').optional().isIn(['male', 'female', 'other']).withMessage('Invalid gender'),
+        body('maritalStatus').optional().isIn(['single', 'married', 'divorced', 'widowed']).withMessage('Invalid marital status'),
+        body('bloodGroup').optional().isIn(['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-']).withMessage('Invalid blood group'),
+        body('address').optional().trim().notEmpty().withMessage('Address cannot be empty'),
+        body('emergencyContact.name').optional().trim().notEmpty().withMessage('Emergency contact name is required'),
+        body('emergencyContact.relationship').optional().trim().notEmpty().withMessage('Emergency contact relationship is required'),
+        body('emergencyContact.phone')
+            .optional()
+            .trim()
+            .matches(/^\+?[1-9]\d{1,14}$/)
+            .withMessage('Invalid emergency contact phone number format')
+    ])
 }; 

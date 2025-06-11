@@ -1,9 +1,13 @@
 // controllers/admin/userController.js
 const User = require('../../models/User');
+const Role = require('../../models/Role');
+const Department = require('../../models/Department');
 const jwt = require('jsonwebtoken');
 const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcryptjs');
+const mongoose = require('mongoose');
+const RolePermission = require('../../models/RolePermission');
 
 // Helper function to remove files
 const removeFile = (filePath) => {
@@ -25,59 +29,73 @@ const userController = {
     // Login controller
     login: async (req, res) => {
         try {
-            const { userId, password } = req.body;
-            let user = await User.findOne({ userId });
-    
+            const { email, password } = req.body;
+
+            // Find user and populate role
+            const user = await User.findOne({ email })
+                .populate({
+                    path: 'role',
+                    select: 'name level permissions isSystem canManageRoles'
+                });
+
             if (!user) {
                 return res.status(401).json({ message: 'Invalid credentials' });
             }
-    
+
+            // Verify password
             const isMatch = await user.comparePassword(password);
             if (!isMatch) {
                 return res.status(401).json({ message: 'Invalid credentials' });
             }
 
-            if (user.status !== 'active') {
-                return res.status(401).json({ message: 'Account is not active' });
-            }
-    
-            // Ensure bankDetails is properly handled
-            if (!user.bankDetails || user.bankDetails === 'N/A') {
-                user.bankDetails = null;
+            // Get role permissions
+            let permissions = [];
+            if (user.role.name === 'superadmin') {
+                permissions = ['*']; // Superadmin has all permissions
+            } else {
+                const rolePermissions = await RolePermission.find({ role: user.role._id, granted: true })
+                    .populate('permission', 'name')
+                    .lean();
+                permissions = rolePermissions.map(rp => rp.permission.name);
+
+                // Add default permissions based on role
+                if (user.role.name === 'admin') {
+                    permissions.push('view_departments', 'manage_departments', 'view_designations', 'manage_designations');
+                }
             }
 
-            user.loginDetails = {
-                lastLogin: new Date(),
-                loginCount: (user.loginDetails?.loginCount || 0) + 1
-            };
-
-            // Use save with validation
-            await user.save({ validateBeforeSave: true });
-    
             const token = jwt.sign(
                 { 
                     userId: user._id, 
-                    role: user.role,
-                    employeeId: user.employeeId 
+                    role: user.role._id,
+                    roleName: user.role.name,
+                    email: user.email,
+                    permissions // Include permissions in token
                 },
                 process.env.JWT_SECRET,
-                { expiresIn: '24h' }
+                { expiresIn: process.env.JWT_EXPIRY || '24h' }
             );
-    
+
             res.json({
                 token,
                 user: {
                     id: user._id,
                     name: user.name,
-                    role: user.role,
+                    email: user.email,
+                    role: user.role.name,
+                    roleId: user.role._id,
+                    roleLevel: user.role.level || 0,
                     department: user.department,
                     employeeId: user.employeeId,
                     designation: user.designation,
-                    position: user.position
+                    position: user.position,
+                    photo: user.photo,
+                    permissions
                 }
             });
         } catch (error) {
-            res.status(500).json({ message: error.message });
+            console.error('Login error:', error);
+            res.status(500).json({ message: 'Login failed' });
         }
     },
 
@@ -699,6 +717,125 @@ const userController = {
         } catch (error) {
             logger.error('Get users error:', error);
             res.status(500).json({ message: 'Failed to fetch users' });
+        }
+    },
+
+    // Get user metrics
+    getUserMetrics: async (req, res) => {
+        try {
+            const { timeframe, department } = req.query;
+            let dateFilter = {};
+            let userFilter = {};
+            
+            // Calculate date range based on timeframe
+            const now = new Date();
+            if (timeframe === 'week') {
+                dateFilter = {
+                    createdAt: {
+                        $gte: new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7),
+                        $lte: now
+                    }
+                };
+            } else if (timeframe === 'month') {
+                dateFilter = {
+                    createdAt: {
+                        $gte: new Date(now.getFullYear(), now.getMonth() - 1, now.getDate()),
+                        $lte: now
+                    }
+                };
+            } else if (timeframe === 'year') {
+                dateFilter = {
+                    createdAt: {
+                        $gte: new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()),
+                        $lte: now
+                    }
+                };
+            }
+
+            // Add department filter if specified
+            if (department && department !== 'all') {
+                userFilter.department = mongoose.Types.ObjectId(department);
+            }
+
+            // Get user metrics
+            const [
+                totalUsers,
+                activeUsers,
+                usersByDepartment,
+                usersByRole,
+                recentUsers
+            ] = await Promise.all([
+                User.countDocuments({ ...dateFilter, ...userFilter }),
+                User.countDocuments({ ...dateFilter, ...userFilter, status: 'active' }),
+                Department.aggregate([
+                    {
+                        $lookup: {
+                            from: 'users',
+                            localField: '_id',
+                            foreignField: 'department',
+                            as: 'users',
+                            pipeline: [
+                                { $match: { ...dateFilter, ...userFilter } }
+                            ]
+                        }
+                    },
+                    {
+                        $project: {
+                            _id: 1,
+                            name: 1,
+                            count: { $size: '$users' }
+                        }
+                    }
+                ]),
+                Role.aggregate([
+                    {
+                        $lookup: {
+                            from: 'users',
+                            localField: '_id',
+                            foreignField: 'role',
+                            as: 'users',
+                            pipeline: [
+                                { $match: { ...dateFilter, ...userFilter } }
+                            ]
+                        }
+                    },
+                    {
+                        $project: {
+                            _id: 1,
+                            name: 1,
+                            count: { $size: '$users' }
+                        }
+                    }
+                ]),
+                User.find({ ...dateFilter, ...userFilter })
+                    .sort({ createdAt: -1 })
+                    .limit(5)
+                    .select('name email role department status')
+                    .populate('role', 'name')
+                    .populate('department', 'name')
+            ]);
+
+            res.json({
+                success: true,
+                data: {
+                    overview: {
+                        total: totalUsers,
+                        active: activeUsers
+                    },
+                    distribution: {
+                        byDepartment: usersByDepartment,
+                        byRole: usersByRole
+                    },
+                    recentUsers
+                }
+            });
+        } catch (error) {
+            console.error('Error in getUserMetrics:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to fetch user metrics',
+                error: error.message
+            });
         }
     }
 };

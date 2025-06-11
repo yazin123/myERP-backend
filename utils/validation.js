@@ -1,7 +1,7 @@
 const Joi = require('joi');
 const mongoose = require('mongoose');
 
-exports.validateTask = (task) => {
+const validateTask = (task) => {
   const schema = Joi.object({
     title: Joi.string().required().trim().min(3).max(200),
     description: Joi.string().required().min(10),
@@ -35,7 +35,7 @@ exports.validateTask = (task) => {
   return schema.validate(task);
 };
 
-exports.validateProject = (project) => {
+const validateProject = (project) => {
   const schema = Joi.object({
     name: Joi.string().required().trim().min(3).max(200),
     description: Joi.string().required().min(10),
@@ -92,7 +92,7 @@ exports.validateProject = (project) => {
   return schema.validate(project);
 };
 
-exports.validateDepartment = (department) => {
+const validateDepartment = (department) => {
   const schema = Joi.object({
     name: Joi.string().required().trim().min(3).max(200),
     description: Joi.string().required().min(10),
@@ -119,7 +119,7 @@ exports.validateDepartment = (department) => {
   return schema.validate(department);
 };
 
-exports.validateTimelineEvent = (event) => {
+const validateTimelineEvent = (event) => {
   const schema = Joi.object({
     title: Joi.string().required().trim().min(3).max(200),
     description: Joi.string().trim(),
@@ -143,5 +143,9 @@ const validateObjectId = (id) => {
 };
 
 module.exports = {
+    validateTask,
+    validateProject,
+    validateDepartment,
+    validateTimelineEvent,
     validateObjectId
 }; 

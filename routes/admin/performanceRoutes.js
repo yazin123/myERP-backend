@@ -37,5 +37,12 @@ router.get('/summary',
   performanceController.getOwnPerformanceSummary
 );
 
+// Get employee performance
+router.get('/employees/:employeeId',
+  authenticate,
+  authorize(['admin', 'teamlead', 'manager']),
+  performanceController.getEmployeePerformance
+);
+
 module.exports = router;
 

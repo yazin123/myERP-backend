@@ -41,4 +41,11 @@ router.get('/:departmentId/designations',
     departmentController.getDepartmentDesignations
 );
 
+// Add new route for updating department head
+router.patch('/:departmentId/head',
+    authenticate,
+    checkPermission('manage_departments'),
+    departmentController.updateDepartmentHead
+);
+
 module.exports = router; 
